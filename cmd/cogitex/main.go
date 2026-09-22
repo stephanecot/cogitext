@@ -586,7 +586,11 @@ func readAllStdin() (string, error) {
 		sb.WriteString(sc.Text())
 		sb.WriteByte('\n')
 	}
-	return sb.String(), sc.Err()
+	// PowerShell préfixe un BOM UTF-8 à TOUT ce qu'il pousse dans le stdin d'un
+	// exécutable natif. Sans ce retrait, `... | cogitex add decision` échoue sur
+	// « JSON illisible » chez tous les utilisateurs Windows, et le message ne dit
+	// rien des trois octets invisibles qui en sont la cause.
+	return strings.TrimPrefix(sb.String(), "\uFEFF"), sc.Err()
 }
 
 func latestSessionID() string {

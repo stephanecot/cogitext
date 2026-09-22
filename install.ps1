@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Dépose cogitex dans un projet, quel qu'il soit.
 

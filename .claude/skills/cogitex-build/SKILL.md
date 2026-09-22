@@ -41,7 +41,32 @@ linux amd64 and arm64, windows amd64). `CGO_ENABLED=0` is not decoration: it is
 what guarantees a binary with no glibc, no musl, nothing to find on a teammate's
 machine — the project's central promise.
 
-## After a build: the two traps
+## Two Windows traps that are invisible on Linux
+
+1. **`install.ps1` must keep its UTF-8 BOM.** Windows PowerShell 5.1 reads a
+   BOM-less file as CP1252, where the em dash `—` (`E2 80 94`) decodes to `â€”` —
+   and that `0x94` is a *right double quotation mark*, which PowerShell treats as
+   a string delimiter. The whole script then fails to parse, on an error pointing
+   at a brace thirty lines earlier. `.gitattributes` pins `*.ps1 text eol=crlf`,
+   and the BOM is part of the file's bytes: never re-save that file as plain
+   UTF-8. Check it with:
+
+   ```sh
+   head -c 3 install.ps1 | xxd     # expect efbbbf
+   ```
+
+2. **PowerShell prefixes a BOM to a native command's stdin.** `Get-Content x.json
+   | cogitex.cmd add decision` hands the binary three invisible bytes before the
+   `{`. `readAllStdin()` and `readHookInput()` strip them; the regression test is
+   `TestStdinToleratesAUTF8BOM`. Any new stdin reader has to do the same.
+
+And one that used to bite: under Git Bash, `uname -s` says
+`MINGW64_NT-10.0-26200`, not `windows`. `cogitex.sh` maps `mingw*`, `msys*` and
+`cygwin*` to `windows` plus a `.exe` suffix — without that mapping, the shim
+looks for a binary that exists for nobody, and it is exactly the shim a plugin
+hook invokes on Windows.
+
+## After a build: two more traps
 
 1. **The executable bit.** The Unix binaries and `cogitex.sh` must stay `100755`
    in the git index, otherwise a Linux clone gets a launcher that refuses to

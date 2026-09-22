@@ -9,6 +9,7 @@ package main
 // touche au corpus, à la branche ou au rendu ne dépend de l'agent appelant.
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"os"
@@ -85,6 +86,10 @@ func pickPath(maps ...map[string]any) string {
 func readHookInput() hookInput {
 	var r rawHook
 	b, err := io.ReadAll(os.Stdin)
+	// Le BOM que PowerShell préfixe au stdin d'un exécutable natif suffirait à
+	// rendre le payload illisible — et le hook, échouant ouvert, laisserait passer
+	// l'écriture sans que rien ne le signale. Trois octets à retirer.
+	b = bytes.TrimPrefix(b, []byte("\uFEFF"))
 	if err == nil && len(b) > 0 {
 		_ = json.Unmarshal(b, &r)
 	}

@@ -15,7 +15,7 @@ platform, with no shared dependency whatsoever. The only thing it requires is
 ## Getting started, in a fresh clone
 
 ```sh
-.claude/cogitex/cogitex.sh init        # macOS, Linux
+.claude/cogitex/cogitex.sh init        # macOS, Linux, Git Bash
 .claude\cogitex\cogitex.cmd init       # Windows
 ```
 
@@ -35,6 +35,7 @@ a clone.
 ```
 bin/cogitex-<os>-<arch>    the binaries, ~3.5 MB each
 cogitex.sh / cogitex.cmd   pick the binary for the current platform
+                           (cogitex.sh also covers Git Bash and MSYS2)
 ```
 
 The binaries are produced by the **cogitext** repository, where the sources and

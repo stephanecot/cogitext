@@ -9,7 +9,7 @@ branch `refs/heads/context`, reachable through the `cogitex` binary committed
 under `.claude/cogitex/`. It needs no runtime — only `git`.
 
 ```sh
-.claude/cogitex/cogitex.sh <command>        # macOS, Linux
+.claude/cogitex/cogitex.sh <command>        # macOS, Linux, Git Bash
 .claude\cogitex\cogitex.cmd <command>       # Windows
 ```
 

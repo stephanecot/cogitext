@@ -9,6 +9,11 @@ dist/.claude/cogitex/bin/** binary
 *.cmd text eol=crlf
 *.go text eol=lf
 
+# PowerShell 5.1 lit un fichier sans BOM en CP1252 : le tiret cadratin y devient
+# un guillemet fermant, et le script cesse de parser. `install.ps1` porte donc un
+# BOM UTF-8, qui fait partie de son contenu et ne doit jamais être retiré.
+*.ps1 text eol=crlf
+
 # Les configurations lues par les deux agents : du LF partout, elles voyagent
 # entre un poste Windows, un runner Linux et l'agent cloud de Copilot.
 *.json text eol=lf

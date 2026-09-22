@@ -409,3 +409,28 @@ func TestPluginStandsDownWhenProjectWiresItsOwnHooks(t *testing.T) {
 		t.Fatal("sans câblage dans le projet, le plugin doit garder")
 	}
 }
+
+// PowerShell préfixe un BOM UTF-8 à tout ce qu'il pousse dans le stdin d'un
+// exécutable natif. Sans son retrait, `... | cogitex add decision` échoue chez
+// TOUS les utilisateurs Windows, sur un message qui ne dit rien des trois octets
+// invisibles qui en sont la cause.
+func TestStdinToleratesAUTF8BOM(t *testing.T) {
+	bin, root := buildCtx(t), emptyRepo(t)
+	payload := "\uFEFF" + `{"session_id":"s","tool_name":"Edit"}`
+
+	// Le hook doit rester silencieux (dépôt non adopté) plutôt que de partir sur un
+	// payload vide : ici on vérifie surtout qu'il ne panique pas et lit bien la clé.
+	if out := runHook(t, bin, "hook-guard", root, payload); out != "" {
+		t.Fatalf("attendu le silence, obtenu : %q", out)
+	}
+
+	seedStale(t, root)
+	out := runHook(t, bin, "hook-guard", root, payload)
+	var d map[string]any
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("un BOM en tête de payload rend le garde aveugle : %v — %q", err, out)
+	}
+	if d["hookSpecificOutput"].(map[string]any)["permissionDecision"] != "deny" {
+		t.Fatalf("attendu deny malgré le BOM, obtenu : %s", out)
+	}
+}

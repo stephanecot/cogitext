@@ -17,7 +17,7 @@ platform. The project needs no runtime of its own — Node, Java, Python, it doe
 not matter. Invoke it through the shim for your platform:
 
 ```sh
-.claude/cogitex/cogitex.sh <command>        # macOS, Linux
+.claude/cogitex/cogitex.sh <command>        # macOS, Linux, Git Bash
 .claude\cogitex\cogitex.cmd <command>       # Windows
 ```
 
