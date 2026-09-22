@@ -11,6 +11,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,7 +108,15 @@ func runGit(args []string, o gitOpts) Result {
 	}
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
+	// Le maître SSH que `ControlPersist` laisse en arrière-plan hérite des tuyaux de
+	// git. Sans cette borne, Wait attend leur fermeture — donc la mort du maître, une
+	// minute plus tard — bien après la fin de git, et le délai ci-dessus n'y peut
+	// rien. Une fois git sorti, tout ce qu'il avait à dire est déjà dans les tampons.
+	cmd.WaitDelay = 500 * time.Millisecond
 	err := cmd.Run()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		err = nil // git a réussi ; seul un orphelin tenait encore les tuyaux
+	}
 	r := Result{Out: strings.TrimSpace(out.String()), Err: strings.TrimSpace(errb.String())}
 	if err == nil {
 		r.OK, r.Code = true, 0

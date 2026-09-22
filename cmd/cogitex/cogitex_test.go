@@ -1116,3 +1116,19 @@ func TestPluginHooksRunWithoutAShell(t *testing.T) {
 		hookEnv("CLAUDE_PLUGIN_ROOT="+plugin, "CLAUDE_PROJECT_DIR="+root))
 	wantDeny(t, out)
 }
+
+// Le multiplexage SSH (`ControlPersist`) laisse derrière le fetch un maître en
+// arrière-plan, qui hérite des tuyaux de git. Sans borne, `runGit` attendait leur
+// fermeture — la mort du maître, une minute plus tard — bien après la fin de git :
+// `init`, `sync`, `add` et `push` pendaient, et le délai imposé ne servait à rien.
+// Un alias qui détache un `sleep` reproduit exactement la même situation.
+func TestRunGitDoesNotWaitForAnOrphanHoldingItsPipes(t *testing.T) {
+	t0 := time.Now()
+	r := runGit([]string{"-c", "alias.hold=!sleep 30 &", "hold"}, gitOpts{Dir: t.TempDir(), Timeout: 20 * time.Second})
+	if d := time.Since(t0); d > 5*time.Second {
+		t.Fatalf("runGit a attendu %v un processus qui n'est plus git", d.Round(time.Second))
+	}
+	if !r.OK {
+		t.Fatalf("git a réussi, runGit doit le dire : %+v", r)
+	}
+}
