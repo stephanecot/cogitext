@@ -1,0 +1,7 @@
+# Pas de normalisation des fins de ligne : core.autocrlf varie selon les postes,
+# et une conversion silencieuse casserait la fusion « union » du journal.
+* -text
+
+# Le journal est le seul fichier réellement concurrent. Il est déjà sharded par
+# acteur ; « union » couvre le cas résiduel du même acteur sur deux machines.
+journal/**/*.ndjson merge=union
