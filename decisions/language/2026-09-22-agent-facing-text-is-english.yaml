@@ -1,0 +1,11 @@
+id: decisions/language/2026-09-22-agent-facing-text-is-english
+title: "Agent-facing text is English"
+type: convention
+status: active
+scope: global
+domain: language
+date: 2026-09-22
+decision: "Everything an agent reads is English; Go comments and installer output stay in French."
+rationale: "The corpus and hook messages are read by models and searched by keyword; the codebase itself is maintained in French."
+refs:
+  - README.md
