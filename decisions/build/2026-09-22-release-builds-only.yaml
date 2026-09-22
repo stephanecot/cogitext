@@ -1,0 +1,11 @@
+id: decisions/build/2026-09-22-release-builds-only
+title: "Release builds only"
+type: convention
+status: active
+scope: domain
+domain: build
+date: 2026-09-22
+decision: "Run build.sh only when cutting a release, and only after go vet and go test pass."
+rationale: "Each run adds five ~3.5 MB blobs to history that git cannot deduplicate; a red suite ships its failure to every host project."
+refs:
+  - .claude/skills/cogitex-build/SKILL.md
