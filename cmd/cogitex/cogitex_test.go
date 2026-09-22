@@ -833,3 +833,87 @@ func TestFindDemotesSupersededEntries(t *testing.T) {
 		t.Fatalf("la règle supersédée devance la règle vivante :\n%s", out)
 	}
 }
+
+// ------------------------------------------------------- le garde qui nomme
+
+// `path.Match` ne traverse pas les séparateurs, donc ne connaît pas `**` — or c'est
+// exactement ce que les gens écrivent. Ce matcher a l'air juste ; seule la table le
+// prouve.
+func TestMatchGlob(t *testing.T) {
+	for _, tc := range []struct {
+		pattern, path string
+		want          bool
+	}{
+		{"src/**/*.go", "src/a/b/c.go", true},
+		{"src/**/*.go", "src/c.go", true},
+		{"src/**/*.go", "src/a/c.java", false},
+		{"src/**/*.go", "lib/a/c.go", false},
+		{"**/*.yaml", "a/b/c.yaml", true},
+		{"**", "anything/at/all", true},
+		{"*.go", "main.go", true},
+		{"*.go", "cmd/main.go", false},
+		{"cmd/*/main.go", "cmd/cogitex/main.go", true},
+		{"cmd/*/main.go", "cmd/a/b/main.go", false},
+		{"api/openapi.yaml", "api/openapi.yaml", true},
+		{"api/openapi.yaml", "api/openapi.yml", false},
+		{"src/**", "src", true},
+		{"", "a", false},
+		{"a", "", false},
+	} {
+		if got := MatchGlob(tc.pattern, tc.path); got != tc.want {
+			t.Fatalf("MatchGlob(%q, %q) = %v, attendu %v", tc.pattern, tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestAffectingNamesOneEntryAtMost(t *testing.T) {
+	root := filepath.FromSlash("/proj")
+	changes := []Change{
+		{ID: "facts/2026-01-01-a", Title: "Schema moved", Affects: []string{"db/**"}},
+		{ID: "facts/2026-01-01-b", Title: "Envelope", Affects: []string{"src/**/*.go"}},
+		{ID: "facts/2026-01-01-c", Title: "Also go", Affects: []string{"**/*.go"}},
+	}
+	hit := affecting(changes, root, filepath.Join(root, "src", "api", "handler.go"))
+	if hit == nil || hit.ID != "facts/2026-01-01-b" {
+		t.Fatalf("la première entrée concernée doit être nommée, obtenu %#v", hit)
+	}
+	if affecting(changes, root, filepath.Join(root, "README.md")) != nil {
+		t.Fatal("aucune entrée ne concerne ce fichier")
+	}
+	// Un chemin hors du projet ne doit pas être comparé comme s'il y était.
+	if affecting(changes, root, "") != nil {
+		t.Fatal("chemin vide : rien à nommer")
+	}
+}
+
+// L'enrichissement ne doit JAMAIS coûter un sous-processus au garde : il ne lit que
+// le delta déjà calculé. Un dépassement du hook fait échouer ouvert, donc laisserait
+// passer l'écriture que le garde était censé retenir.
+func TestGuardNamesTheRuleFromTheCachedDeltaOnly(t *testing.T) {
+	bin, root := buildCtx(t), emptyRepo(t)
+	seedStale(t, root)
+	payload := `{"session_id":"s","tool_name":"Edit","tool_input":{"file_path":"` +
+		filepath.ToSlash(filepath.Join(root, "src", "api", "handler.go")) + `"}}`
+
+	// Sans delta en cache : le refus reste un compteur, sans un mot de plus.
+	if out := runHook(t, bin, "hook-guard", root, payload); strings.Contains(out, "names this very file") {
+		t.Fatalf("rien ne doit être nommé sans delta en cache :\n%s", out)
+	}
+
+	cfg := LoadConfig(root)
+	from, to := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	memo := DeltaFile(root, from, to, cfg.DeltaMaxEntries, cfg.FactsBlock)
+	if err := os.MkdirAll(filepath.Dir(memo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(memo, []Change{
+		{ID: "facts/2026-01-01-envelope", Title: "Handlers return an envelope", Affects: []string{"src/**/*.go"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := runHook(t, bin, "hook-guard", root, payload)
+	if !strings.Contains(out, "facts/2026-01-01-envelope") {
+		t.Fatalf("le refus doit nommer la règle qui concerne ce fichier :\n%s", out)
+	}
+}

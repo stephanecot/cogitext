@@ -128,12 +128,13 @@ func RenderBrief(c Corpus, h *Head, cfg Config) string {
 }
 
 type Change struct {
-	Status string
-	Path   string
-	ID     string
-	Kind   string
-	Title  string
-	Rule   string
+	Status  string
+	Path    string
+	ID      string
+	Kind    string
+	Title   string
+	Rule    string
+	Affects []string
 }
 
 // Le delta : le SEUL chemin qui se répète, donc celui qu'il faut border le plus. Une
@@ -180,8 +181,7 @@ func DescribeChanges(root, from, to string, cfg Config, limit int) []Change {
 	// huit `git show` à CHAQUE prompt — et sous Copilot, où la session reste périmée à
 	// dessein jusqu'au premier refus, la facture se répétait tour après tour.
 	memo := DeltaFile(root, from, to, limit, cfg.FactsBlock)
-	var cached []Change
-	if readJSON(memo, &cached) && len(cached) > 0 {
+	if cached := CachedChanges(root, from, to, cfg, limit); len(cached) > 0 {
 		return cached
 	}
 	paths := []string{"decisions", "facts"}
@@ -219,6 +219,7 @@ func DescribeChanges(root, from, to string, cfg Config, limit int) []Change {
 		}
 		e := Parse(r.Out)
 		out[i].Title = e.Str("title")
+		out[i].Affects = e.List("affects")
 		out[i].Rule = e.Str("decision")
 		if out[i].Rule == "" {
 			out[i].Rule = e.Str("body")
@@ -231,4 +232,17 @@ func DescribeChanges(root, from, to string, cfg Config, limit int) []Change {
 		_ = writeJSONAtomic(memo, out)
 	}
 	return out
+}
+
+// Le delta DÉJÀ calculé, ou rien. Aucun sous-processus, aucune attente : c'est ce
+// qui permet au garde de s'en servir sans jamais risquer un tour. Le calculer là
+// coûterait un `git diff` et jusqu'à huit `git show`, sous un hook plafonné à cinq
+// secondes — et un dépassement fait échouer ouvert, donc laisse passer l'écriture
+// que le garde était censé retenir.
+func CachedChanges(root, from, to string, cfg Config, limit int) []Change {
+	var cached []Change
+	if readJSON(DeltaFile(root, from, to, limit, cfg.FactsBlock), &cached) {
+		return cached
+	}
+	return nil
 }

@@ -237,6 +237,20 @@ func hookGuard(root string, in hookInput) {
 	// Le refus annonce un COMPTEUR, jamais les entrées — sinon un import de quarante
 	// décisions injecterait des milliers de tokens dans chaque session périmée, par
 	// un chemin que personne ne surveille.
+	// Le refus annonce un COMPTEUR, jamais les entrées. Mais si l'une d'elles nomme
+	// justement le fichier que le modèle s'apprête à écrire, la citer vaut mieux que
+	// n'importe quel compteur — et une seule, le plafond de tokens du refus étant
+	// précisément sa raison d'être.
+	//
+	// Uniquement depuis le delta DÉJÀ en cache : le garde ne doit jamais attendre git.
+	// Sous Copilot, où le hook de prompt calcule le delta sans ré-épingler la session,
+	// il y est systématiquement — c'est-à-dire exactement là où ce refus porte tout le
+	// message.
+	named := ""
+	if hit := affecting(CachedChanges(root, s.Gate, gate, cfg, cfg.DeltaMaxEntries), root, in.FilePath); hit != nil {
+		named = fmt.Sprintf("\n\nOne of them names this very file: %s — %s", hit.ID, hit.Title)
+	}
+
 	self := selfCmd(root)
 	reason := fmt.Sprintf(
 		"cogitex: this session is pinned to shared context %s, but %d decision(s)/fact(s) have landed "+
@@ -244,7 +258,7 @@ func hookGuard(root string, in hookInput) {
 			"Run this, read the delta, then retry your edit:\n\n    %s sync\n\n"+
 			"It prints only what changed (a few lines), re-pins this session and unblocks Edit/Write. "+
 			"Notes and journal entries never trigger this. Offline or cogitex broken: `%s sync --offline` "+
-			"re-pins locally and unblocks you right away.", short(s.Gate), n, gate7, self, self)
+			"re-pins locally and unblocks you right away.%s", short(s.Gate), n, gate7, self, self, named)
 
 	emitGuard("deny", reason,
 		fmt.Sprintf("cogitex: %d new shared rule(s) — writes paused until `%s sync`.", n, self))
