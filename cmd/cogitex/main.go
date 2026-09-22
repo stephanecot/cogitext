@@ -35,7 +35,7 @@ func die(f string, a ...any)  { warn("cogitex : "+f, a...); os.Exit(1) }
 // l'argument suivant : `hook-start --copilot /chemin/du/projet` perdrait sa racine.
 var boolFlags = map[string]bool{
 	"--offline": true, "--no-push": true, "--copilot": true, "--claude": true,
-	"--no-hooks": true, "--force": true,
+	"--no-hooks": true, "--force": true, "--all": true,
 }
 
 func hasFlag(n string) bool {
@@ -105,7 +105,7 @@ const help = `cogitex — contexte partagé sur la branche orpheline « context 
   add decision|fact|note  enregistrer une entrée (JSON sur stdin) [--no-push]
   push                    publier les commits locaux en un seul mouvement
   sync [--offline]        récupérer, afficher le delta, ré-épingler la session
-  find "<mots>"           chercher dans tout le corpus
+  find "<mots>" [--all]   chercher dans tout le corpus
   show <id>               afficher une entrée en entier
   list decisions|facts|notes
   brief                   afficher le bloc injecté au démarrage
@@ -833,7 +833,7 @@ func cmdFind() {
 	}
 	var hits []scored
 	for _, r := range ReadIndex(root) {
-		hay := strings.ToLower(r.ID + " " + r.Title + " " + r.Rule + " " +
+		hay := strings.ToLower(r.ID + " " + r.Title + " " + r.Rule + " " + r.Text + " " +
 			strings.Join(r.Tags, " ") + " " + r.Domain)
 		n := 0
 		for _, t := range q {
@@ -849,9 +849,22 @@ func cmdFind() {
 		say("cogitex : aucune entrée ne correspond.")
 		return
 	}
-	sort.SliceStable(hits, func(i, j int) bool { return hits[i].n > hits[j].n })
+	// Une règle remplacée ne doit jamais devancer une règle vivante, quel que soit son
+	// score : la première ne s'applique plus. Elle reste atteignable — c'est tout
+	// l'objet de la ligne « +N more » et de `--all`.
+	sort.SliceStable(hits, func(i, j int) bool {
+		ai, aj := rowActive(hits[i].r), rowActive(hits[j].r)
+		if ai != aj {
+			return ai
+		}
+		return hits[i].n > hits[j].n
+	})
+	max := 8
+	if hasFlag("all") {
+		max = len(hits)
+	}
 	for i, h := range hits {
-		if i >= 8 {
+		if i >= max {
 			break
 		}
 		status := ""
@@ -864,7 +877,16 @@ func cmdFind() {
 		}
 		say("%s [%s%s]\n    %s", h.r.ID, h.r.Kind, status, body)
 	}
+	// Le brief annonce toujours sa troncature ; `find` la taisait, ce qui apprend au
+	// modèle que huit résultats sont tout ce qui existe.
+	if n := len(hits) - max; n > 0 {
+		say("+%d more — affine les mots-clés, ou `cogitex find \"...\" --all`", n)
+	}
 }
+
+// Un statut vide vaut « actif » : c'est la règle de `IsActive`, et les faits comme
+// les notes n'en portent pas.
+func rowActive(r IndexRow) bool { return r.Status == "" || contains(Active, r.Status) }
 
 // L'identifiant est le chemin, à l'extension près : la résolution est donc trois
 // `stat`, sans index ni git.

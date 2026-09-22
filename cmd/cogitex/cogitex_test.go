@@ -756,3 +756,80 @@ func TestJournalCountFollowsTheJournal(t *testing.T) {
 		t.Fatal("le mémo du journal n'a pas été écrit")
 	}
 }
+
+// ---------------------------------------------------------------- la recherche
+
+func TestMarkdownBodyIsRecovered(t *testing.T) {
+	for label, tc := range map[string]struct{ in, want string }{
+		"front-matter":      {"---\ntitle: t\n---\n\nTried a compound index.\nIt fails.\n", "Tried a compound index.\nIt fails."},
+		"sans front-matter": {"Just prose.\n", "Just prose."},
+		"front-matter seul": {"---\ntitle: t\n---\n", ""},
+	} {
+		if got := MarkdownBody([]byte(tc.in)); got != tc.want {
+			t.Fatalf("%s : %q ≠ %q", label, got, tc.want)
+		}
+	}
+}
+
+// Le brief affirme au modèle que `find` couvre 100 % du corpus. C'était faux : le
+// corps d'une note n'était indexé nulle part, alors que c'est là qu'on écrit
+// l'impasse et sa raison.
+func TestFindReachesANoteBodyAndARationale(t *testing.T) {
+	bin := buildCtx(t)
+	root := initRepo(t, bin)
+	addEntry(t, bin, root, "note",
+		`{"title":"Indexing attempt","body":"Tried a compound index on the dossiers table. It fails because the second column is optional."}`)
+	addEntry(t, bin, root, "decision",
+		`{"title":"Envelope","type":"convention","domain":"api","scope":"global","decision":"Errors follow RFC 7807.","rationale":"One shape spares every client a bespoke parser."}`)
+
+	for _, word := range []string{"compound", "optional", "bespoke"} {
+		if out := run(t, bin, root, "find", word); strings.Contains(out, "aucune entrée") {
+			t.Fatalf("« %s » n'est atteignable que par le corps ou le rationale, et `find` ne le trouve pas :\n%s", word, out)
+		}
+	}
+	// Mais la ligne de résultat reste une phrase, pas le document entier.
+	out := run(t, bin, root, "find", "compound")
+	for _, line := range strings.Split(out, "\n") {
+		if len(line) > 200 {
+			t.Fatalf("ligne de résultat trop longue (%d octets) :\n%s", len(line), line)
+		}
+	}
+}
+
+func TestFindAnnouncesItsTruncation(t *testing.T) {
+	bin := buildCtx(t)
+	root := initRepo(t, bin)
+	for i := 0; i < 10; i++ {
+		addEntry(t, bin, root, "note",
+			`{"title":"Widget note `+itoa(i)+`","slug":"widget-`+itoa(i)+`","body":"About the widget."}`)
+	}
+	out := run(t, bin, root, "find", "widget")
+	if !strings.Contains(out, "+2 more") {
+		t.Fatalf("la troncature doit être annoncée :\n%s", out)
+	}
+	if all := run(t, bin, root, "find", "widget", "--all"); strings.Contains(all, "more —") {
+		t.Fatalf("--all ne doit rien tronquer :\n%s", all)
+	}
+}
+
+// Une règle remplacée ne s'applique plus : elle ne doit jamais devancer une règle
+// vivante, quel que soit son score.
+func TestFindDemotesSupersededEntries(t *testing.T) {
+	bin := buildCtx(t)
+	root := initRepo(t, bin)
+	addEntry(t, bin, root, "decision",
+		`{"title":"Errors are strings","slug":"errors-old","type":"convention","domain":"api","scope":"global","decision":"Errors are plain strings everywhere.","rationale":"History."}`)
+	old := "decisions/api/" + Today() + "-errors-old"
+	addEntry(t, bin, root, "decision",
+		`{"title":"Errors","slug":"errors-new","type":"convention","domain":"api","scope":"global","decision":"Errors follow RFC 7807.","rationale":"One shape.","supersedes":"`+old+`"}`)
+
+	out := run(t, bin, root, "find", "errors")
+	iNew := strings.Index(out, "errors-new")
+	iOld := strings.Index(out, "errors-old")
+	if iNew < 0 || iOld < 0 {
+		t.Fatalf("les deux doivent rester atteignables :\n%s", out)
+	}
+	if iOld < iNew {
+		t.Fatalf("la règle supersédée devance la règle vivante :\n%s", out)
+	}
+}

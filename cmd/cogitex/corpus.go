@@ -47,6 +47,9 @@ func ReadCorpus(root string) Corpus {
 				continue // un fichier illisible ne fait pas échouer la construction
 			}
 			e := Parse(string(b))
+			if strings.HasSuffix(rel, ".md") && e.Str("body") == "" {
+				e["body"] = MarkdownBody(b)
+			}
 			e["__path"] = rel
 			e["__id"] = IDFromPath(rel)
 			e["__kind"] = KindFromPath(rel)
@@ -135,6 +138,23 @@ type IndexRow struct {
 	Rule   string   `json:"rule"`
 	Tags   []string `json:"tags"`
 	Date   string   `json:"date"`
+	// Ce qu'on cherche sans jamais l'afficher : le « pourquoi » d'une entrée vit dans
+	// `rationale`, `context` et `consequences`, et la moitié des recherches porte
+	// dessus. Les lister ici les rend trouvables sans alourdir la ligne de résultat.
+	Text string `json:"text,omitempty"`
+}
+
+// La ligne de résultat montre une phrase, pas un document : le corps d'une note peut
+// faire trente lignes, et `find` doit en rendre huit au total.
+func summarize(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	if len(s) > max {
+		return strings.TrimSpace(s[:max]) + "…"
+	}
+	return s
 }
 
 // Les tips sont passés, jamais recalculés : l'appelant les connaît déjà, et les
@@ -166,11 +186,13 @@ func BuildHead(root string, c Corpus, tip, local string) *Head {
 	for _, e := range c.Entries {
 		rule := e.Str("decision")
 		if rule == "" {
-			rule = e.Str("body")
+			rule = summarize(e.Str("body"), 160)
 		}
 		row := IndexRow{ID: e.Str("__id"), Kind: e.Str("__kind"), Domain: e.Str("domain"),
 			Status: e.Str("status"), Title: e.Str("title"), Rule: rule,
-			Tags: e.List("tags"), Date: e.Str("date")}
+			Tags: e.List("tags"), Date: e.Str("date"),
+			Text: strings.Join(append([]string{e.Str("rationale"), e.Str("context"), e.Str("body")},
+				e.List("consequences")...), " ")}
 		b, _ := json.Marshal(row)
 		sb.Write(b)
 		sb.WriteByte('\n')

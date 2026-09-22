@@ -232,6 +232,24 @@ func ReplaceScalar(src []byte, key, value string) ([]byte, bool) {
 	return append(out, src[loc[1]:]...), true
 }
 
+// Le corps d'une note vit APRÈS le front-matter, et `Parse` ne sait pas le relire :
+// il ne retient que les lignes `clé: valeur`. Sans cette extraction, la prose d'une
+// note n'était indexée nulle part — or c'est précisément là qu'on écrit l'impasse et
+// sa raison, la connaissance la plus chère à redécouvrir, et le brief promettait au
+// modèle que `find` couvrait 100 % du corpus.
+func MarkdownBody(src []byte) string {
+	end := frontMatterEnd(src)
+	if end == 0 {
+		return strings.TrimSpace(string(src))
+	}
+	rest := src[end+1:] // commence sur le `---` fermant
+	i := bytes.IndexByte(rest, '\n')
+	if i < 0 {
+		return ""
+	}
+	return strings.TrimSpace(string(rest[i+1:]))
+}
+
 func frontMatterEnd(src []byte) int {
 	if !bytes.HasPrefix(src, []byte("---\n")) && !bytes.HasPrefix(src, []byte("---\r\n")) {
 		return 0
