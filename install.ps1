@@ -1,12 +1,13 @@
 <#
 .SYNOPSIS
-  Dépose cogit dans un projet, quel qu'il soit.
+  Dépose cogitex dans un projet, quel qu'il soit.
 
 .DESCRIPTION
-  Copie le contenu de `dist/` dans le projet cible, puis ajoute à son
-  `.gitignore` et à son `.gitattributes` les lignes sans lesquelles cogit
-  fonctionne mal : le worktree du contexte serait commité, et les binaires
-  seraient corrompus par la conversion de fins de ligne.
+  Copie le contenu de `dist/` dans le projet cible — binaire et lanceurs, skills
+  et agent pour Claude Code, hooks et instructions pour GitHub Copilot — puis
+  ajoute à son `.gitignore` et à son `.gitattributes` les lignes sans lesquelles
+  cogitex fonctionne mal : le worktree du contexte serait commité, et les
+  binaires seraient corrompus par la conversion de fins de ligne.
 
   Rien n'est écrasé sans le dire : un fichier déjà présent et différent est
   signalé et conservé, sauf avec -Force.
@@ -23,16 +24,16 @@ param(
 $ErrorActionPreference = "Stop"
 
 if (-not (Test-Path -LiteralPath $Target -PathType Container)) {
-  Write-Error "cogit : « $Target » n'est pas un répertoire."
+  Write-Error "cogitex : « $Target » n'est pas un répertoire."
 }
 if (-not (Test-Path -LiteralPath (Join-Path $Target ".git"))) {
-  Write-Error "cogit : « $Target » n'est pas un dépôt git — cogit porte son contexte sur une branche."
+  Write-Error "cogitex : « $Target » n'est pas un dépôt git — cogitex porte son contexte sur une branche."
 }
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $src = Join-Path $here "dist"
 if (-not (Test-Path -LiteralPath (Join-Path $src ".claude"))) {
-  Write-Error "cogit : payload introuvable dans $src."
+  Write-Error "cogitex : payload introuvable dans $src."
 }
 
 $copied = 0
@@ -68,23 +69,29 @@ function Add-Line {
 
 $ignore = Join-Path $Target ".gitignore"
 $attrs = Join-Path $Target ".gitattributes"
-Add-Line $ignore "/.cogit/" "# Worktree du contexte partage, monte par ``cogit init``."
-Add-Line $ignore "/.claude/cache/" "# Cache des sessions Claude Code."
-Add-Line $ignore "/.claude/settings.local.json" "# Reglages ecrits par ``cogit init`` : ils designent un binaire par OS."
-Add-Line $attrs ".claude/cogit/bin/** binary" "# Les binaires cogit ne doivent subir aucune conversion de fins de ligne."
-Add-Line $attrs ".claude/cogit/cogit.sh text eol=lf" "# Les lanceurs gardent les fins de ligne de leur plateforme."
-Add-Line $attrs ".claude/cogit/cogit.cmd text eol=crlf" ""
+Add-Line $ignore "/.cogitex/" "# Worktree du contexte partage, monte par ``cogitex init``."
+Add-Line $ignore "/.claude/cache/" "# Cache des sessions des agents."
+Add-Line $ignore "/.claude/settings.local.json" "# Reglages ecrits par ``cogitex init`` : ils designent un binaire par OS."
+Add-Line $attrs ".claude/cogitex/bin/** binary" "# Les binaires cogitex ne doivent subir aucune conversion de fins de ligne."
+Add-Line $attrs ".claude/cogitex/cogitex.sh text eol=lf" "# Les lanceurs gardent les fins de ligne de leur plateforme."
+Add-Line $attrs ".claude/cogitex/cogitex.cmd text eol=crlf" ""
 
 Write-Output ""
-Write-Output "cogit installe dans $Target — $copied fichier(s) copie(s), $kept conserve(s)."
+Write-Output "cogitex installe dans $Target — $copied fichier(s) copie(s), $kept conserve(s)."
 if ($kept -gt 0) { Write-Output "Relancez avec -Force pour remplacer ce qui a ete conserve." }
 Write-Output @"
 
 Reste a faire, dans le projet :
 
-  .claude\cogit\cogit.cmd init       # Windows
-  .claude/cogit/cogit.sh init        # macOS, Linux, Git Bash
+  .claude\cogitex\cogitex.cmd init       # Windows
+  .claude/cogitex/cogitex.sh init        # macOS, Linux, Git Bash
 
-``init`` cree ou rejoint la branche de contexte, monte le worktree ``.cogit``,
-et cable les hooks dans ``.claude/settings.local.json``.
+``init`` cree ou rejoint la branche de contexte, monte le worktree ``.cogitex``,
+et cable les hooks Claude Code dans ``.claude/settings.local.json`` — local et
+gitignore, parce qu'un chemin de binaire depend de l'OS.
+
+Les hooks GitHub Copilot sont deja en place : ``.github/hooks/cogitex.json`` et
+``.github/instructions/cogitex.instructions.md`` ne dependent d'aucun chemin
+absolu. Commitez-les — c'est ce qui les donne a toute l'equipe, et a l'agent
+cloud, qui ne lit que ``.github/hooks/``.
 "@

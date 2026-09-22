@@ -1,114 +1,181 @@
-# cogit — contexte partagé entre sessions
+# cogitex — shared context across sessions
 
-`cogit` porte les **décisions, faits, notes et journal** d'une équipe sur une
-branche git orpheline, `refs/heads/context`, et câble trois hooks Claude Code qui
-les injectent au démarrage d'une session, les rafraîchissent, et bloquent une
-écriture faite sous des règles que la session n'a pas lues.
+`cogitex` carries a team's **decisions, facts, notes and journal** on an orphan
+git branch, `refs/heads/context`, and wires three hooks — in **Claude Code** and
+in **GitHub Copilot** alike — that inject them at session start, refresh them
+mid-session, and pause a write made under rules the session has not read.
 
-Le contexte voyage donc avec le dépôt : pas de service, pas de base, pas de
-compte. Ce que sait une session, la suivante le sait aussi — y compris chez
-quelqu'un d'autre.
+The context therefore travels with the repository: no service, no database, no
+account. What one session knows, the next one knows too — including on someone
+else's machine, and including in the other agent.
 
-## Pourquoi un binaire
+## Why a binary
 
-Ce dépôt doit pouvoir s'installer dans **n'importe quel projet** — Java, Python,
-Go, .NET, TypeScript — sans lui imposer de runtime. `cogit` est donc un binaire
-statique, un par plateforme, sans aucune dépendance partagée. La seule chose
-qu'il exige est `git`, ce qui est cohérent : tout le système est bâti dessus.
+This has to install into **any project** — Java, Python, Go, .NET, TypeScript —
+without imposing a runtime on it. `cogitex` is therefore a static binary, one per
+platform, with no shared dependency whatsoever. The only thing it requires is
+`git`, which is consistent: the whole system is built on it.
 
-C'est la raison d'être de ce dépôt séparé : le code vivait dans un projet
-applicatif, qui n'avait aucune raison de porter l'outillage de tous les autres.
+That is the reason for this separate repository: the code used to live inside an
+application project, which had no business carrying everyone else's tooling.
 
-## Installer dans un projet
+## Two ways to install it
+
+| | As a plugin | Dropped into the project |
+|---|---|---|
+| Scope | all your projects, on your machine | this project, for the whole team |
+| Installed by | `/plugin install` | `install.sh` / `install.ps1` |
+| Who benefits | you | everyone, plus Copilot's cloud agent |
+
+Both can coexist: when a project wires its own hooks, the plugin stands down —
+otherwise every turn would pay for the same hook twice.
+
+### As a plugin
+
+This repository is both a plugin and its own marketplace, for both agents.
 
 ```sh
-./install.sh /chemin/vers/le/projet          # macOS, Linux, Git Bash
-.\install.ps1 C:\chemin\vers\le\projet       # Windows
+# Claude Code
+/plugin marketplace add stephanecot/cogitext
+/plugin install cogitex@cogitex
+
+# GitHub Copilot CLI
+copilot plugin marketplace add stephanecot/cogitext
+copilot plugin install cogitex@cogitex
 ```
 
-L'installateur copie `dist/` dans le projet et ajoute à son `.gitignore` et à son
-`.gitattributes` les lignes sans lesquelles cogit fonctionne mal — sans le second,
-les binaires sont corrompus par la conversion de fins de ligne sur un clone
-Windows. Rien n'est écrasé sans le dire : un fichier déjà présent et différent est
-signalé et conservé, sauf avec `--force` / `-Force`.
+The plugin brings the hooks, both skills, the curator agent and the `/sync`,
+`/find` and `/doctor` commands. Each project still has to be bootstrapped once,
+with `init`.
 
-Puis, dans le projet :
+### Dropped into the project
 
 ```sh
-.claude/cogit/cogit.sh init        # macOS, Linux, Git Bash
-.claude\cogit\cogit.cmd init       # Windows
+./install.sh /path/to/the/project            # macOS, Linux, Git Bash
+.\install.ps1 C:\path\to\the\project         # Windows
 ```
 
-`init` crée ou rejoint la branche, monte le worktree `.cogit`, et écrit
-`.claude/settings.local.json` — **local et gitignoré**, parce qu'un
-`settings.json` ne peut pas désigner un chemin de binaire différent selon l'OS.
-C'est la contrepartie assumée des binaires commités : une commande après le
-clone, mais aucune installation et aucune toolchain.
+The installer copies `dist/` into the project, then adds to its `.gitignore` and
+`.gitattributes` the lines without which cogitex misbehaves — without the second
+one, the binaries are corrupted by line-ending conversion on a Windows clone.
+Nothing is overwritten silently: a file already present and different is reported
+and kept, unless `--force` / `-Force` is given.
 
-Chaque personne qui clone le projet lance `init` une fois.
+Then, inside the project:
 
-## Commandes
+```sh
+.claude/cogitex/cogitex.sh init        # macOS, Linux, Git Bash
+.claude\cogitex\cogitex.cmd init       # Windows
+```
+
+`init` creates or joins the branch, mounts the `.cogitex` worktree, and writes
+`.claude/settings.local.json` — **local and gitignored**, because a
+`settings.json` cannot point at a different binary path per OS. That is the
+accepted price of committed binaries: one command after cloning, but no
+installation and no toolchain.
+
+The Copilot hooks, on the other hand, arrive already wired in
+`.github/hooks/cogitex.json`: they depend on no absolute path, so they are meant
+to be committed. **Commit them** — that is what gives them to the team, and to
+Copilot's cloud agent, which reads nothing but `.github/hooks/`.
+
+Everyone who clones the project runs `init` once.
+
+## Commands
 
 ```
-init                    créer ou rejoindre la branche, monter .cogit, câbler les hooks
-add decision|fact|note  enregistrer une entrée (JSON sur stdin) [--no-push]
-push                    publier les commits locaux en un seul mouvement
-sync [--offline]        récupérer, afficher le delta, ré-épingler la session
-find "<mots>"           chercher dans tout le corpus
-show <id>               afficher une entrée en entier
+init [--no-hooks]       create or join the branch, mount .cogitex, wire the hooks
+add decision|fact|note  record an entry (JSON on stdin) [--no-push]
+push                    publish local commits in one move
+sync [--offline]        fetch, print the delta, re-pin the session
+find "<words>"          search the whole corpus
+show <id>               print one entry in full
 list decisions|facts|notes
-brief                   afficher le bloc injecté au démarrage
-doctor                  vérifier le corpus, le plafond du brief et la plateforme
-compact                 compacter la base d'objets
-debug on|off|tail|clear tracer les interactions
+brief                   print the block injected at session start
+doctor                  check the corpus, the brief's cap and the platform
+compact                 compact the object database
+debug on|off|tail|clear trace the interactions
 
-hook-start | hook-prompt | hook-guard    points d'entrée des hooks Claude Code
+hook-start | hook-prompt | hook-guard    hook entry points
 ```
 
-## Structure du dépôt
+## Repository layout
 
 ```
-*.go                     les sources du binaire (module Go à la racine)
-build.sh                 reconstruit les cinq binaires dans dist/
-install.sh / install.ps1 déposent dist/ dans un projet hôte
+cmd/cogitex/             the binary's sources (go.mod stays at the root)
+    agent.go             the translation into each agent's dialect
+build.sh                 rebuilds the five binaries into dist/
+install.sh / install.ps1 drop dist/ into a host project
 
-dist/                    ce qui est déposé dans un projet, tel quel
-└── .claude/
-    ├── cogit/
-    │   ├── bin/cogit-<os>-<arch>   les binaires, ~3 Mo chacun
-    │   ├── cogit.sh / cogit.cmd    choisissent le binaire de la plateforme
-    │   └── README.md               la mise en route, côté projet hôte
-    ├── agents/cogit-curator.md     l'agent qui tient le corpus en ordre
-    └── skills/
-        ├── cogit-recall/           lire le contexte avant de choisir une approche
-        └── cogit-record/           enregistrer une décision, un fait, une note
+.claude/skills/          THIS repository's own skills: building, packaging
+
+.claude-plugin/          the Claude Code manifest, and the marketplace for both
+.plugin/                 the GitHub Copilot manifest
+hooks/                   claude-hooks.json and copilot-hooks.json
+commands/                the /sync, /find and /doctor commands
+
+dist/                    what gets dropped into a project, as is
+├── .claude/
+│   ├── cogitex/
+│   │   ├── bin/cogitex-<os>-<arch>  the binaries, ~3.5 MB each
+│   │   ├── cogitex.sh / .cmd        pick the binary for the platform
+│   │   └── README.md                getting started, on the host project's side
+│   ├── agents/cogitex-curator.md    the agent that keeps the corpus in order
+│   └── skills/
+│       ├── cogitex-recall/          read the context before choosing an approach
+│       └── cogitex-record/          record a decision, a fact, a note
+└── .github/
+    ├── hooks/cogitex.json           the Copilot hooks, committable as they are
+    └── instructions/                what Copilot needs to know about cogitex
 ```
 
-## Développer
+Both manifests point at the **same** skills and the **same** agent, inside
+`dist/`: nothing is duplicated, and the binaries live in exactly one place in the
+repository.
 
-Les sources sont un module Go ordinaire, à la racine.
+## Developing
+
+The sources live in `cmd/cogitex/`; `go.mod` stays at the root, where go expects
+it. It is an ordinary Go module.
 
 ```sh
 go build ./...     # compile
-go test ./...      # ctx_test.go couvre le corpus, l'état et le rendu
-./build.sh         # reconstruit les cinq binaires dans dist/
+go test ./...      # covers the corpus, the state, the rendering and both dialects
+./build.sh         # rebuilds the five binaries into dist/
 ```
 
-`build.sh` n'est à lancer **qu'au moment d'une release** : chaque exécution
-ajoute un blob par plateforme dans l'historique git, et git gère mal le binaire
-qui change souvent. Les binaires présents dans `dist/` sont ceux de la dernière
-release ; ils ne sont pas régénérés à chaque modification des sources.
+`build.sh` is to be run **only when cutting a release**: every run adds one blob
+per platform to git history, and git handles a frequently changing binary badly.
+The binaries in `dist/` are the ones from the last release; they are not
+regenerated on every source change.
 
-## Ce qui est lié à Claude Code, et ce qui ne l'est pas
+Everything an agent reads — the skills, the commands, the curator agent, the
+Copilot instructions, and every message a hook hands back to a model — is written
+in English. The Go sources are commented in French, as is the installers' output.
 
-Le cœur — corpus, branche, worktree, rendu, recherche — ne dépend que de `git`.
-Trois points d'ancrage seulement supposent Claude Code :
+## What is tied to an agent, and what is not
 
-| Chemin | Rôle |
+The core — corpus, branch, worktree, rendering, search — depends on nothing but
+`git`. What assumes an agent fits in two configuration files and one Go file:
+
+| Path | Role |
 |---|---|
-| `.claude/settings.local.json` | déclare les trois hooks, écrit par `init` |
-| `.claude/cogit/` | le binaire et ses lanceurs |
-| `.claude/cache/cogit/` | l'état d'épinglage d'une session |
+| `cmd/cogitex/agent.go` | reads both payload dialects, writes both response dialects |
+| `hooks/claude-hooks.json` | the three Claude Code events, plugin side |
+| `hooks/copilot-hooks.json` | the same ones, under Copilot's names |
+| `.claude/settings.local.json` | a project's Claude Code hooks, written by `init` |
+| `.github/hooks/cogitex.json` | a project's Copilot hooks, committed |
+| `.claude/cache/cogitex/` | a session's pinning state |
 
-Porter cogit vers un autre agent revient donc à changer la façon dont les hooks
-sont déclarés, pas le reste.
+The differences between the two agents come down to three points, all carried by
+`cmd/cogitex/agent.go`:
+
+- Claude sends `session_id` / `tool_name`, Copilot sends `sessionId` / `toolName`;
+- Claude expects the guard's decision under `hookSpecificOutput`, Copilot expects
+  it at the root of the object;
+- at **prompt** time, Claude accepts additional context, Copilot does not. So the
+  session stays stale under Copilot, and it is the refusal on the first edit that
+  carries the message — the one place where it is certain to arrive.
+
+Porting cogitex to a third agent means adding a dialect to
+`cmd/cogitex/agent.go` and one hooks file. Nothing else moves.

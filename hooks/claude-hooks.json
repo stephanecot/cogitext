@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json.schemastore.org/hooks-schema.json",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/dist/.claude/cogitex/cogitex.sh\" hook-start --claude \"${CLAUDE_PROJECT_DIR}\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/dist/.claude/cogitex/cogitex.sh\" hook-prompt --claude \"${CLAUDE_PROJECT_DIR}\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/dist/.claude/cogitex/cogitex.sh\" hook-guard --claude \"${CLAUDE_PROJECT_DIR}\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

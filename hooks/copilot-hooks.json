@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "d=\"$PLUGIN_ROOT\"; [ -n \"$d\" ] || d=\"$CLAUDE_PLUGIN_ROOT\"; \"$d/dist/.claude/cogitex/cogitex.sh\" hook-start --copilot",
+        "powershell": "$d = if ($env:PLUGIN_ROOT) { $env:PLUGIN_ROOT } else { $env:CLAUDE_PLUGIN_ROOT }; & \"$d\\dist\\.claude\\cogitex\\cogitex.cmd\" hook-start --copilot",
+        "timeoutSec": 10
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "d=\"$PLUGIN_ROOT\"; [ -n \"$d\" ] || d=\"$CLAUDE_PLUGIN_ROOT\"; \"$d/dist/.claude/cogitex/cogitex.sh\" hook-prompt --copilot",
+        "powershell": "$d = if ($env:PLUGIN_ROOT) { $env:PLUGIN_ROOT } else { $env:CLAUDE_PLUGIN_ROOT }; & \"$d\\dist\\.claude\\cogitex\\cogitex.cmd\" hook-prompt --copilot",
+        "timeoutSec": 5
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "matcher": "(create|create_file|edit|edit_file|write|write_file|multi_edit|str_replace|str_replace_editor|apply_patch|insert_edit_into_file|replace_string_in_file|Edit|Write|MultiEdit)",
+        "bash": "d=\"$PLUGIN_ROOT\"; [ -n \"$d\" ] || d=\"$CLAUDE_PLUGIN_ROOT\"; \"$d/dist/.claude/cogitex/cogitex.sh\" hook-guard --copilot",
+        "powershell": "$d = if ($env:PLUGIN_ROOT) { $env:PLUGIN_ROOT } else { $env:CLAUDE_PLUGIN_ROOT }; & \"$d\\dist\\.claude\\cogitex\\cogitex.cmd\" hook-guard --copilot",
+        "timeoutSec": 5
+      }
+    ]
+  }
+}

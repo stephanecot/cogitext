@@ -1,6 +1,9 @@
-# Worktree du contexte partagé, monté par `cogit init` dans le projet hôte.
-/.cogit/
-# Cache des sessions Claude Code.
+# Worktree du contexte partagé, monté par `cogitex init` dans le projet hôte.
+/.cogitex/
+# Cache des sessions des agents.
 /.claude/cache/
-# Réglages locaux écrits par `cogit init` : ils désignent un binaire par OS.
+# Réglages locaux écrits par `cogitex init` : ils désignent un binaire par OS.
 /.claude/settings.local.json
+# Binaire local produit par `go build ./...` — la release passe par dist/.
+/cogitex
+/cogitex.exe

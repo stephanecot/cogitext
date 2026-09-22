@@ -1,0 +1,14 @@
+{
+  "name": "cogitex",
+  "displayName": "cogitex — contexte partagé",
+  "description": "Shared team context on an orphan git branch: decisions, facts and notes injected at session start, refreshed mid-session, and a guard that pauses writes made under rules the session has not read.",
+  "version": "1.0.0",
+  "author": { "name": "stephanecot" },
+  "repository": "https://github.com/stephanecot/cogitext",
+  "homepage": "https://github.com/stephanecot/cogitext",
+  "license": "MIT",
+  "keywords": ["context", "memory", "git", "team", "decisions"],
+  "skills": "./dist/.claude/skills/",
+  "agents": ["./dist/.claude/agents/cogitex-curator.md"],
+  "hooks": "./hooks/claude-hooks.json"
+}

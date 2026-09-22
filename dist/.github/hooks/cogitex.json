@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "r=$(git rev-parse --show-toplevel 2>/dev/null) && \"$r/.claude/cogitex/cogitex.sh\" hook-start --copilot",
+        "powershell": "$r = git rev-parse --show-toplevel 2>$null; if ($r) { & \"$r/.claude/cogitex/cogitex.cmd\" hook-start --copilot }",
+        "timeoutSec": 10
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "r=$(git rev-parse --show-toplevel 2>/dev/null) && \"$r/.claude/cogitex/cogitex.sh\" hook-prompt --copilot",
+        "powershell": "$r = git rev-parse --show-toplevel 2>$null; if ($r) { & \"$r/.claude/cogitex/cogitex.cmd\" hook-prompt --copilot }",
+        "timeoutSec": 5
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "matcher": "(create|create_file|edit|edit_file|write|write_file|multi_edit|str_replace|str_replace_editor|apply_patch|insert_edit_into_file|replace_string_in_file|Edit|Write|MultiEdit)",
+        "bash": "r=$(git rev-parse --show-toplevel 2>/dev/null) && \"$r/.claude/cogitex/cogitex.sh\" hook-guard --copilot",
+        "powershell": "$r = git rev-parse --show-toplevel 2>$null; if ($r) { & \"$r/.claude/cogitex/cogitex.cmd\" hook-guard --copilot }",
+        "timeoutSec": 5
+      }
+    ]
+  }
+}

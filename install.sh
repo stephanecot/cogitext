@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Dépose cogit dans un projet, quel qu'il soit.
+# Dépose cogitex dans un projet, quel qu'il soit.
 #
 #   ./install.sh /chemin/vers/le/projet
 #
-# Copie le contenu de `dist/` dans le projet, puis ajoute au `.gitignore` et au
-# `.gitattributes` de l'hôte les lignes sans lesquelles cogit fonctionne mal :
-# le worktree du contexte serait commité, et les binaires seraient corrompus par
-# la conversion de fins de ligne sur un clone Windows.
+# Copie le contenu de `dist/` dans le projet : le binaire et ses lanceurs, les
+# skills et l'agent pour Claude Code, les hooks et les instructions pour GitHub
+# Copilot. Puis ajoute au `.gitignore` et au `.gitattributes` de l'hôte les lignes
+# sans lesquelles cogitex fonctionne mal : le worktree du contexte serait commité,
+# et les binaires seraient corrompus par la conversion de fins de ligne sur un
+# clone Windows.
 #
 # Rien n'est écrasé sans le dire : un fichier déjà présent et différent est
 # signalé et conservé, sauf avec --force.
@@ -27,17 +29,17 @@ if [ -z "$TARGET" ]; then
   exit 2
 fi
 if [ ! -d "$TARGET" ]; then
-  echo "cogit : « $TARGET » n'est pas un répertoire." >&2
+  echo "cogitex : « $TARGET » n'est pas un répertoire." >&2
   exit 1
 fi
 if [ ! -e "$TARGET/.git" ]; then
-  echo "cogit : « $TARGET » n'est pas un dépôt git — cogit porte son contexte sur une branche." >&2
+  echo "cogitex : « $TARGET » n'est pas un dépôt git — cogitex porte son contexte sur une branche." >&2
   exit 1
 fi
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE/dist"
-[ -d "$SRC/.claude" ] || { echo "cogit : payload introuvable dans $SRC." >&2; exit 1; }
+[ -d "$SRC/.claude" ] || { echo "cogitex : payload introuvable dans $SRC." >&2; exit 1; }
 
 copied=0 kept=0
 while IFS= read -r rel; do
@@ -52,7 +54,12 @@ while IFS= read -r rel; do
   fi
   mkdir -p "$(dirname "$to")"
   cp "$from" "$to"
-  [ "${rel##*.}" = "sh" ] && chmod +x "$to"
+  # Le bit d'exécution, sur le lanceur comme sur les binaires : un clone qui l'aurait
+  # perdu — archive zip, copie via un partage Windows — donnerait un `cogitex.sh` qui
+  # refuse de démarrer, avec un message qui n'aide personne.
+  case "$rel" in
+    *.sh | */cogitex/bin/*) [ "${rel##*.}" = "exe" ] || chmod +x "$to" ;;
+  esac
   copied=$((copied + 1))
 done < <(cd "$SRC" && find . -type f | sed 's#^\./##')
 
@@ -65,23 +72,29 @@ add_line() {
     echo "  ajouté à $(basename "$file") : $line"
   fi
 }
-add_line "$TARGET/.gitignore" "/.cogit/" "# Worktree du contexte partagé, monté par \`cogit init\`."
-add_line "$TARGET/.gitignore" "/.claude/cache/" "# Cache des sessions Claude Code."
-add_line "$TARGET/.gitignore" "/.claude/settings.local.json" "# Réglages écrits par \`cogit init\` : ils désignent un binaire par OS."
-add_line "$TARGET/.gitattributes" ".claude/cogit/bin/** binary" "# Les binaires cogit ne doivent subir aucune conversion de fins de ligne."
-add_line "$TARGET/.gitattributes" ".claude/cogit/cogit.sh text eol=lf" "# Les lanceurs gardent les fins de ligne de leur plateforme."
-add_line "$TARGET/.gitattributes" ".claude/cogit/cogit.cmd text eol=crlf" ""
+add_line "$TARGET/.gitignore" "/.cogitex/" "# Worktree du contexte partagé, monté par \`cogitex init\`."
+add_line "$TARGET/.gitignore" "/.claude/cache/" "# Cache des sessions des agents."
+add_line "$TARGET/.gitignore" "/.claude/settings.local.json" "# Réglages écrits par \`cogitex init\` : ils désignent un binaire par OS."
+add_line "$TARGET/.gitattributes" ".claude/cogitex/bin/** binary" "# Les binaires cogitex ne doivent subir aucune conversion de fins de ligne."
+add_line "$TARGET/.gitattributes" ".claude/cogitex/cogitex.sh text eol=lf" "# Les lanceurs gardent les fins de ligne de leur plateforme."
+add_line "$TARGET/.gitattributes" ".claude/cogitex/cogitex.cmd text eol=crlf" ""
 
 echo
-echo "cogit installé dans $TARGET — $copied fichier(s) copié(s), $kept conservé(s)."
+echo "cogitex installé dans $TARGET — $copied fichier(s) copié(s), $kept conservé(s)."
 [ "$kept" -gt 0 ] && echo "Relancez avec --force pour remplacer ce qui a été conservé."
 cat <<'NEXT'
 
 Reste à faire, dans le projet :
 
-  .claude/cogit/cogit.sh init        # macOS, Linux, Git Bash
-  .claude\cogit\cogit.cmd init       # Windows
+  .claude/cogitex/cogitex.sh init        # macOS, Linux, Git Bash
+  .claude\cogitex\cogitex.cmd init       # Windows
 
-`init` crée ou rejoint la branche de contexte, monte le worktree `.cogit`, et
-câble les hooks dans `.claude/settings.local.json`.
+`init` crée ou rejoint la branche de contexte, monte le worktree `.cogitex`, et
+câble les hooks Claude Code dans `.claude/settings.local.json` — local et
+gitignoré, parce qu'un chemin de binaire dépend de l'OS.
+
+Les hooks GitHub Copilot, eux, sont déjà en place : `.github/hooks/cogitex.json`
+et `.github/instructions/cogitex.instructions.md` ne dépendent d'aucun chemin
+absolu. **Commitez-les** — c'est ce qui les donne à toute l'équipe, et à l'agent
+cloud, qui ne lit que `.github/hooks/`.
 NEXT

@@ -1,0 +1,23 @@
+{
+  "name": "cogitex",
+  "owner": { "name": "stephanecot", "url": "https://github.com/stephanecot/cogitext" },
+  "description": "cogitex — shared team context carried by an orphan git branch",
+  "metadata": {
+    "description": "cogitex — shared team context carried by an orphan git branch",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "cogitex",
+      "source": "./",
+      "description": "Shared team context on an orphan git branch: decisions, facts and notes injected at session start, refreshed mid-session, and a guard that pauses writes made under rules the session has not read.",
+      "version": "1.0.0",
+      "author": { "name": "stephanecot" },
+      "repository": "https://github.com/stephanecot/cogitext",
+      "homepage": "https://github.com/stephanecot/cogitext",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": ["context", "memory", "git", "team", "decisions"]
+    }
+  ]
+}

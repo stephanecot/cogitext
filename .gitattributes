@@ -1,10 +1,15 @@
-# Les binaires cogit ne doivent subir aucune conversion de fins de ligne. Git les
+# Les binaires cogitex ne doivent subir aucune conversion de fins de ligne. Git les
 # traiterait sinon comme du texte sur un clone Windows et les corromprait.
-dist/.claude/cogit/bin/** binary
+dist/.claude/cogitex/bin/** binary
 
-# Les lanceurs gardent les fins de ligne de leur plateforme : un `.sh` en CRLF
-# n'est pas exécutable sous Unix, un `.cmd` en LF se comporte mal sous cmd.exe.
-dist/.claude/cogit/cogit.sh text eol=lf
-dist/.claude/cogit/cogit.cmd text eol=crlf
-build.sh text eol=lf
+# Les lanceurs et les scripts gardent les fins de ligne de leur plateforme : un
+# `.sh` en CRLF n'est pas exécutable sous Unix — le shebang y emporte un \r — et
+# un `.cmd` en LF se comporte mal sous cmd.exe.
+*.sh text eol=lf
+*.cmd text eol=crlf
 *.go text eol=lf
+
+# Les configurations lues par les deux agents : du LF partout, elles voyagent
+# entre un poste Windows, un runner Linux et l'agent cloud de Copilot.
+*.json text eol=lf
+*.md text eol=lf
