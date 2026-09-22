@@ -590,6 +590,20 @@ func cmdAdd() {
 	}
 	e["id"] = IDFromPath(rel)
 
+	// `supersedes` ne supersédait rien : il ne déclenchait qu'un avertissement de
+	// `doctor`, et l'ancienne règle restait `active` — donc injectée dans le brief de
+	// tout le monde — jusqu'à ce que quelqu'un édite le fichier à la main. La cible
+	// bascule maintenant dans le MÊME commit : les deux moitiés du remplacement
+	// atterrissent ensemble ou pas du tout.
+	supPath := ""
+	if sup := e.Str("supersedes"); sup != "" && kind == "decision" {
+		p, ok := resolveEntry(root, sup)
+		if !ok {
+			die("`supersedes` pointe sur un identifiant inconnu : %s", sup)
+		}
+		supPath = p
+	}
+
 	var body string
 	if kind == "note" {
 		meta := Entry{"title": e["title"], "date": e["date"], "author": e["author"],
@@ -619,7 +633,22 @@ func cmdAdd() {
 		}
 		_, _ = f.Write(append(line, '\n'))
 		f.Close()
-		commitCtx([]string{rel, jrel}, kind+": "+e.Str("title"))
+		paths := []string{rel, jrel}
+		if supPath != "" {
+			b, err := os.ReadFile(filepath.Join(wt, supPath))
+			if err != nil {
+				return err
+			}
+			out, ok := ReplaceScalar(b, "status", "superseded")
+			if !ok {
+				return fmt.Errorf("%s n'a pas de champ `status` à basculer", supPath)
+			}
+			if err := os.WriteFile(filepath.Join(wt, supPath), out, 0o644); err != nil {
+				return err
+			}
+			paths = append(paths, supPath)
+		}
+		commitCtx(paths, kind+": "+e.Str("title"))
 		return nil
 	})
 	if err != nil {
@@ -627,6 +656,9 @@ func cmdAdd() {
 	}
 
 	say("cogitex : %s", rel)
+	if supPath != "" {
+		say("cogitex : %s passe à `superseded`.", IDFromPath(supPath))
+	}
 	Trace(root, "add", map[string]any{"kind": kind, "path": rel, "actor": gitUser()})
 	h := EnsureHead(root, true)
 	// Sans ce ré-épinglage, mes PROPRES écritures déplacent le gate et je me
@@ -824,18 +856,31 @@ func cmdFind() {
 	}
 }
 
+// L'identifiant est le chemin, à l'extension près : la résolution est donc trois
+// `stat`, sans index ni git.
+func resolveEntry(root, id string) (string, bool) {
+	for _, ext := range []string{".yaml", ".yml", ".md"} {
+		if fileExists(filepath.Join(CogitexDir(root), id+ext)) {
+			return id + ext, true
+		}
+	}
+	return "", false
+}
+
 func cmdShow() {
 	p := positional()
 	if len(p) == 0 {
 		die("usage : cogitex show <id>")
 	}
-	for _, ext := range []string{".yaml", ".yml", ".md"} {
-		if b, err := os.ReadFile(filepath.Join(CogitexDir(root), p[0]+ext)); err == nil {
-			os.Stdout.Write(b)
-			return
-		}
+	rel, ok := resolveEntry(root, p[0])
+	if !ok {
+		die("entrée inconnue : %s", p[0])
 	}
-	die("entrée inconnue : %s", p[0])
+	b, err := os.ReadFile(filepath.Join(CogitexDir(root), rel))
+	if err != nil {
+		die("%v", err)
+	}
+	os.Stdout.Write(b)
 }
 
 func cmdList() {

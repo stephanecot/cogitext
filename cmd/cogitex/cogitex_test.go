@@ -621,3 +621,95 @@ func TestInitHealsAnAlreadyBrandedRepository(t *testing.T) {
 		t.Fatal("le worktree doit être remonté après la réparation")
 	}
 }
+
+// ------------------------------------------------------- réécrire sans détruire
+
+// `Entry` est une map précisément pour qu'une entrée écrite par une version plus
+// récente survive à une relecture par une version plus ancienne. `Emit` démentait
+// cette promesse en silence — et c'est ce qui rend une réécriture sûre.
+func TestEmitKeepsUnknownFields(t *testing.T) {
+	back := Parse(Emit(Entry{
+		"title": "t", "date": "2026-01-01",
+		"severity":  "high",                // scalaire d'une version future
+		"reviewers": []string{"ana", "bo"}, // liste d'une version future
+	}))
+	if got := back.Str("severity"); got != "high" {
+		t.Fatalf("champ scalaire inconnu perdu : %q", got)
+	}
+	if got := back.List("reviewers"); len(got) != 2 || got[0] != "ana" {
+		t.Fatalf("liste inconnue perdue : %#v", got)
+	}
+	// `slug` ne fait pas partie de l'entrée : il ne sert qu'à nommer le fichier.
+	if Parse(Emit(Entry{"title": "t", "slug": "x"})).Str("slug") != "" {
+		t.Fatal("`slug` ne doit pas être figé dans le corpus")
+	}
+}
+
+func TestReplaceScalarTouchesOneLineOnly(t *testing.T) {
+	src := []byte("id: decisions/api/x\nstatus: active\ndecision: The $1 rule stays.\n")
+	out, ok := ReplaceScalar(src, "status", "superseded")
+	if !ok {
+		t.Fatal("le champ devait être trouvé")
+	}
+	want := "id: decisions/api/x\nstatus: superseded\ndecision: The $1 rule stays.\n"
+	if string(out) != want {
+		t.Fatalf("réécriture non chirurgicale :\n%s", out)
+	}
+	if _, ok := ReplaceScalar(src, "absent", "x"); ok {
+		t.Fatal("un champ absent ne doit pas être signalé comme remplacé")
+	}
+}
+
+// Le corps d'une note peut contenir une ligne qui ressemble à un champ — souvent
+// parce qu'elle cite une entrée. L'en-tête seul doit être touché.
+func TestReplaceScalarIgnoresANoteBody(t *testing.T) {
+	src := []byte("---\nid: notes/2026-01-01-x\nstatus: open\n---\n\nTried this:\nstatus: active\nand it failed.\n")
+	out, _ := ReplaceScalar(src, "status", "closed")
+	if !strings.Contains(string(out), "---\nid: notes/2026-01-01-x\nstatus: closed\n---") {
+		t.Fatalf("l'en-tête n'a pas été mis à jour :\n%s", out)
+	}
+	if !strings.Contains(string(out), "\nstatus: active\nand it failed.") {
+		t.Fatalf("le corps a été touché :\n%s", out)
+	}
+}
+
+// `supersedes` ne faisait que déclencher un avertissement de `doctor` : l'ancienne
+// règle restait `active`, donc injectée dans le brief de toute l'équipe, jusqu'à ce
+// que quelqu'un édite le fichier à la main.
+func TestSupersedesFlipsItsTargetInTheSameCommit(t *testing.T) {
+	bin := buildCtx(t)
+	root := initRepo(t, bin)
+	addEntry(t, bin, root, "decision",
+		`{"title":"Old rule","slug":"old-rule","type":"convention","domain":"api","scope":"global","decision":"Errors are plain strings.","rationale":"History."}`)
+
+	old := "decisions/api/" + Today() + "-old-rule"
+	addEntry(t, bin, root, "decision",
+		`{"title":"New rule","slug":"new-rule","type":"convention","domain":"api","scope":"global","decision":"Errors follow RFC 7807.","rationale":"One shape.","supersedes":"`+old+`"}`)
+
+	if out := run(t, bin, root, "show", old); !strings.Contains(out, "status: superseded") {
+		t.Fatalf("la cible devait basculer :\n%s", out)
+	}
+	if out := run(t, bin, root, "brief"); strings.Contains(out, "plain strings") {
+		t.Fatalf("une règle supersédée ne doit plus être injectée :\n%s", out)
+	}
+	// Les deux moitiés du remplacement atterrissent ensemble : doctor ne signalait
+	// justement que le cas où l'une manquait.
+	if out, err := tryRun(bin, root, "doctor"); err != nil {
+		t.Fatalf("doctor doit être vert après une supersession propre :\n%s", out)
+	}
+}
+
+func TestSupersedesRefusesAnUnknownTarget(t *testing.T) {
+	bin := buildCtx(t)
+	root := initRepo(t, bin)
+	cmd := exec.Command(bin, "add", "decision", "--no-push", "--root", root)
+	cmd.Stdin = strings.NewReader(
+		`{"title":"New","type":"convention","domain":"api","scope":"global","decision":"A rule.","rationale":"x","supersedes":"decisions/api/nope"}`)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("une cible inconnue doit être refusée :\n%s", out)
+	}
+	if !strings.Contains(string(out), "identifiant inconnu") {
+		t.Fatalf("message peu clair :\n%s", out)
+	}
+}

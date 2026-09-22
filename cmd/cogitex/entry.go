@@ -9,9 +9,11 @@ package main
 // l'aller-retour soit fidèle.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -166,6 +168,12 @@ func encodeScalar(v string) string {
 
 func Emit(e Entry) string {
 	var sb strings.Builder
+	emitList := func(k string, items []string) {
+		sb.WriteString(k + ":\n")
+		for _, it := range items {
+			sb.WriteString("  - " + encodeScalar(it) + "\n")
+		}
+	}
 	for _, k := range scalarOrder {
 		v := e.Str(k)
 		if v == "" {
@@ -174,16 +182,79 @@ func Emit(e Entry) string {
 		sb.WriteString(k + ": " + encodeScalar(v) + "\n")
 	}
 	for _, k := range listOrder {
-		items := e.List(k)
-		if len(items) == 0 {
+		if items := e.List(k); len(items) > 0 {
+			emitList(k, items)
+		}
+	}
+	// Les champs qu'on ne connaît pas partent en queue, plutôt qu'à la poubelle.
+	// C'est ce qui rend vraie la promesse de la map juste au-dessus : une entrée
+	// écrite par une version plus récente doit survivre à une réécriture par une
+	// version plus ancienne. Sans cela, promouvoir un brouillon ou basculer un
+	// statut amputerait l'entrée en silence.
+	//
+	// Le tri rend l'octet identique d'une machine à l'autre — sans lui, deux postes
+	// réécrivant la même entrée produiraient deux diffs sans différence de contenu.
+	for _, k := range unknownKeys(e) {
+		if items := e.List(k); len(items) > 0 {
+			emitList(k, items)
 			continue
 		}
-		sb.WriteString(k + ":\n")
-		for _, it := range items {
-			sb.WriteString("  - " + encodeScalar(it) + "\n")
+		if v := e.Str(k); v != "" {
+			sb.WriteString(k + ": " + encodeScalar(v) + "\n")
 		}
 	}
 	return sb.String()
+}
+
+// Remplace la valeur d'un champ scalaire EN PLACE, sans toucher au reste du fichier.
+//
+// C'est la seule façon admise de modifier une entrée existante. Un Parse + Emit
+// détruirait le corps markdown d'une note — que Parse ne sait pas relire — et
+// réordonnerait des octets sans que rien n'ait changé.
+//
+// `FindIndex` + découpe plutôt que `ReplaceAll` : ce dernier interprète `$1` dans le
+// remplacement, et une valeur contenant un `$` serait silencieusement mutilée.
+func ReplaceScalar(src []byte, key, value string) ([]byte, bool) {
+	limit := len(src)
+	// Une note est un front-matter suivi de markdown, et sa prose peut très bien
+	// contenir une ligne qui ressemble à un champ. On ne cherche que dans l'en-tête.
+	if end := frontMatterEnd(src); end > 0 {
+		limit = end
+	}
+	loc := regexp.MustCompile(`(?m)^`+regexp.QuoteMeta(key)+`:[ \t]*.*$`).FindIndex(src[:limit])
+	if loc == nil {
+		return src, false
+	}
+	line := []byte(key + ": " + encodeScalar(value))
+	out := make([]byte, 0, len(src)+len(line))
+	out = append(out, src[:loc[0]]...)
+	out = append(out, line...)
+	return append(out, src[loc[1]:]...), true
+}
+
+func frontMatterEnd(src []byte) int {
+	if !bytes.HasPrefix(src, []byte("---\n")) && !bytes.HasPrefix(src, []byte("---\r\n")) {
+		return 0
+	}
+	if i := bytes.Index(src[4:], []byte("\n---")); i >= 0 {
+		return 4 + i
+	}
+	return 0
+}
+
+// `slug` n'est pas un champ de l'entrée : il n'existe qu'en entrée de `PathFor`,
+// pour choisir le nom du fichier. Le réémettre le figerait dans le corpus.
+func unknownKeys(e Entry) []string {
+	var out []string
+	for k := range e {
+		if strings.HasPrefix(k, "__") || k == "slug" ||
+			contains(scalarOrder, k) || contains(listOrder, k) {
+			continue
+		}
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func decodeScalar(raw string) any {
