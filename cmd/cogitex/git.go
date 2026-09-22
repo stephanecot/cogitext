@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -157,6 +158,40 @@ func FetchDetached(root string) bool {
 	}
 	_ = cmd.Process.Release()
 	return true
+}
+
+// Le même geste dans l'autre sens : publier ce que `add --no-push` ou un push raté
+// a laissé en local. Un push non forcé ne réussit qu'en avance rapide, donc ce tir
+// à l'aveugle ne peut rien écraser ; s'il est rejeté, `sync` ou le prochain `add`
+// fusionnera, et le suivant repartira.
+func PushDetached(root string) bool {
+	cmd := exec.Command("git", append(hardened(), "push", "--no-verify", "-q", "origin", Ref+":"+Ref)...)
+	cmd.Dir = root
+	cmd.Env = netEnv()
+	cmd.Stdout, cmd.Stderr, cmd.Stdin = nil, nil, nil
+	detach(cmd)
+	if err := cmd.Start(); err != nil {
+		return false
+	}
+	_ = cmd.Process.Release()
+	return true
+}
+
+func HasOrigin(root string) bool { return git(root, "remote", "get-url", "origin").OK }
+
+// Les commits de `context` qu'origin n'a pas. Sans référence distante, tout
+// l'historique local est en attente : la branche n'a jamais été publiée d'ici. Sans
+// remote `origin`, il n'y a nulle part où publier, donc rien d'en retard.
+func Unpublished(root string) int {
+	if LocalTip(root) == "" || !HasOrigin(root) {
+		return 0
+	}
+	rng := Ref
+	if RevParse(root, RemoteRef) != "" {
+		rng = RemoteRef + ".." + Ref
+	}
+	n, _ := strconv.Atoi(git(root, "rev-list", "--count", rng).Out)
+	return n
 }
 
 func RevParse(root, rev string) string {

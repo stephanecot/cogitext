@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -1130,5 +1131,82 @@ func TestRunGitDoesNotWaitForAnOrphanHoldingItsPipes(t *testing.T) {
 	}
 	if !r.OK {
 		t.Fatalf("git a réussi, runGit doit le dire : %+v", r)
+	}
+}
+
+// ------------------------------------------------------------ publication
+
+// Un dépôt initialisé avec un `origin` nu, local : de quoi publier pour de vrai.
+func repoWithOrigin(t *testing.T, bin string) (root, bare string) {
+	t.Helper()
+	bare = filepath.Join(t.TempDir(), "origin.git")
+	if out, err := exec.Command("git", "init", "-q", "--bare", bare).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare : %v\n%s", err, out)
+	}
+	root = emptyRepo(t)
+	for _, args := range [][]string{{"config", "user.email", "tester@cogitex.local"},
+		{"config", "user.name", "tester"}, {"remote", "add", "origin", bare}} {
+		if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v : %v\n%s", args, err, out)
+		}
+	}
+	run(t, bin, root, "init", "--no-hooks")
+	return root, bare
+}
+
+func remoteContext(t *testing.T, bare string) string {
+	t.Helper()
+	out, _ := exec.Command("git", "--git-dir", bare, "rev-parse", "--verify", "-q", "refs/heads/context").Output()
+	return strings.TrimSpace(string(out))
+}
+
+func localContext(t *testing.T, root string) string {
+	t.Helper()
+	out, _ := exec.Command("git", "-C", root, "rev-parse", "refs/heads/context").Output()
+	return strings.TrimSpace(string(out))
+}
+
+const decisionJSON = `{"title":"Ids are slugs","type":"convention","domain":"api","scope":"global","decision":"Identifiers are stable slugs.","rationale":"Stable URLs."}`
+
+// La branche n'existe pour l'équipe que publiée : doctor doit voir un commit resté
+// en local, et `push` le compter — y compris au tout premier push, quand
+// `origin/context` n'existe pas encore et que le comptage `origin..local` échouait.
+func TestDoctorFlagsUnpublishedCommits(t *testing.T) {
+	bin := buildCtx(t)
+	root, bare := repoWithOrigin(t, bin)
+	addEntry(t, bin, root, "decision", decisionJSON)
+
+	out, err := tryRun(bin, root, "doctor")
+	if err == nil || !strings.Contains(out, "non publié") {
+		t.Fatalf("doctor doit signaler les commits non publiés :\n%s", out)
+	}
+	if out := run(t, bin, root, "push"); !regexp.MustCompile(`\d+ commit\(s\) à publier`).MatchString(out) {
+		t.Fatalf("push doit annoncer un compte chiffré :\n%s", out)
+	}
+	if remoteContext(t, bare) != localContext(t, root) {
+		t.Fatal("push n'a pas publié la branche")
+	}
+	if out, err := tryRun(bin, root, "doctor"); err != nil || strings.Contains(out, "non publié") {
+		t.Fatalf("après push, doctor ne doit plus rien signaler :\n%s", out)
+	}
+}
+
+// Ce qu'un `--no-push` ou un push raté a laissé en local repart au démarrage de
+// session suivant, en arrière-plan, sans rien coûter au hook.
+func TestSessionStartPublishesWhatWasLeftBehind(t *testing.T) {
+	bin := buildCtx(t)
+	root, bare := repoWithOrigin(t, bin)
+	addEntry(t, bin, root, "decision", decisionJSON)
+	if remoteContext(t, bare) == localContext(t, root) {
+		t.Fatal("prémisse : --no-push ne doit rien publier")
+	}
+
+	runHook(t, bin, "hook-start", root, `{"session_id":"s1","source":"startup"}`)
+	deadline := time.Now().Add(10 * time.Second)
+	for remoteContext(t, bare) != localContext(t, root) {
+		if time.Now().After(deadline) {
+			t.Fatal("le démarrage de session n'a pas publié le commit resté en local")
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }

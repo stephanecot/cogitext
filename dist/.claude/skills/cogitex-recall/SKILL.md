@@ -77,8 +77,8 @@ cogitex debug tail
 ```
 
 `doctor` is the one to run when the injected block starts feeling heavy: it reports
-the brief's byte size against its cap, expired facts, dangling `supersedes`, and
-duplicate identifiers.
+the brief's byte size against its cap, expired facts, dangling `supersedes`,
+duplicate identifiers, and context commits never published to `origin`.
 
 ## What not to do
 

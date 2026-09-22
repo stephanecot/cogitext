@@ -96,6 +96,7 @@ func hookStart(root string, in hookInput) {
 	})
 	GCSessions(root)
 	MaybeRefresh(root, cfg)
+	MaybePublish(root, h)
 
 	if context == "" {
 		mode = "rien"

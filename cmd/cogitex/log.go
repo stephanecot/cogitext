@@ -110,3 +110,24 @@ func MaybeRefresh(root string, cfg Config) bool {
 	Trace(root, "refresh", map[string]any{"spawned": ok})
 	return ok
 }
+
+// Ce qui a été commité ici mais n'est jamais parti. La branche n'existe pour les
+// coéquipiers que publiée : un `add --no-push` sans `push`, ou un push raté hors
+// ligne, laisserait sinon des règles que personne d'autre ne voit, sans que rien
+// ne le signale jamais.
+//
+// Une fois par démarrage de session, et gratuit dans le cas courant : le tip local
+// est déjà dans head.json, la référence distante se lit dans un fichier. Les deux
+// sous-processus du comptage ne sont payés que si les deux diffèrent.
+func MaybePublish(root string, h *Head) bool {
+	if IsCI() || h == nil || h.Local == "" || RemoteRefSha(root) == h.Local {
+		return false
+	}
+	n := Unpublished(root)
+	if n == 0 {
+		return false // en retard sur origin, pas en avance : c'est l'affaire du fetch
+	}
+	ok := PushDetached(root)
+	Trace(root, "publish", map[string]any{"spawned": ok, "pending": n})
+	return ok
+}

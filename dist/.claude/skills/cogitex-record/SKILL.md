@@ -129,4 +129,6 @@ Facts and notes take `add fact` / `add note` with the same shape (`affects` and
   `cogitex add` stages the exact two paths it wrote.
 
 Publication is automatic and best-effort: if the remote is unreachable the commit
-stays local and goes out later. Say so and move on; never block on the network.
+stays local, and the next session start publishes it in the background. Say so
+and move on; never block on the network. After a `--no-push` batch, always end
+with `cogitex push` — the branch exists for teammates only once it is published.

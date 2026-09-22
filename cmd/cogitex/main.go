@@ -676,12 +676,14 @@ func cmdPush() {
 	if !WorktreeReady(root) {
 		die("worktree absent — lance `cogitex init`")
 	}
-	ahead := git(root, "rev-list", "--count", RemoteRef+".."+Ref)
-	if ahead.OK && ahead.Out == "0" {
+	// Sans `origin/context`, le comptage `origin..local` échouait et le message
+	// annonçait « commit(s) à publier » sans chiffre, au premier push de la branche.
+	n := Unpublished(root)
+	if n == 0 {
 		say("cogitex : rien à publier.")
 		return
 	}
-	say("cogitex : %s commit(s) à publier.", ahead.Out)
+	say("cogitex : %d commit(s) à publier.", n)
 	publish("")
 }
 
@@ -1451,6 +1453,13 @@ func cmdDoctor() {
 	// antérieur à 2.48 y refuse alors la moindre commande.
 	if branded {
 		problems = append(problems, brandMsg)
+	}
+	// La branche n'existe pour l'équipe que publiée. Un commit resté ici — `--no-push`
+	// sans `push`, ou un push raté hors ligne — est une règle que personne d'autre
+	// ne voit.
+	if n := Unpublished(root); n > 0 {
+		problems = append(problems, fmt.Sprintf("%d commit(s) de `context` non publié(s) : "+
+			"les coéquipiers ne les voient pas — `cogitex push`", n))
 	}
 
 	if h.N.Drafts > 0 {
