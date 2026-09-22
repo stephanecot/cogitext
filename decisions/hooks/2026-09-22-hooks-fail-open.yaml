@@ -1,0 +1,11 @@
+id: decisions/hooks/2026-09-22-hooks-fail-open
+title: "Hooks fail open"
+type: architecture
+status: active
+scope: global
+domain: hooks
+date: 2026-09-22
+decision: "No infrastructure failure may block a turn; only real staleness may deny a write."
+rationale: "A broken shared-context tool must never cost the user an edit. Every error path allows silently."
+refs:
+  - cmd/cogitex/hooks.go
