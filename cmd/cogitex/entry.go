@@ -150,8 +150,60 @@ func JournalPathFor(actor, date string) string {
 
 var extRe = regexp.MustCompile(`\.(ya?ml|md)$`)
 
-func IDFromPath(p string) string   { return extRe.ReplaceAllString(p, "") }
-func KindFromPath(p string) string { return strings.TrimSuffix(strings.SplitN(p, "/", 2)[0], "s") }
+func IDFromPath(p string) string { return extRe.ReplaceAllString(p, "") }
+
+// La nature se lit sur le premier segment — celui qui reste une fois le préfixe de
+// brouillon retiré. Un brouillon de décision est une décision : `Validate`,
+// `IsActive`, `FactExpired` et le tri du brief s'y appliquent sans une seule
+// branche supplémentaire.
+func KindFromPath(p string) string {
+	return strings.TrimSuffix(strings.SplitN(StripDraft(p), "/", 2)[0], "s")
+}
+
+// ------------------------------------------------------------------ brouillons
+
+// Les brouillons vivent sous une racine par auteur, qui recopie l'arbre réel :
+//
+//	drafts/<acteur>/decisions/<domaine>/<date>-<slug>.yaml
+//
+// Deux propriétés en découlent, et aucune n'est une convention à respecter.
+//
+// D'abord, un brouillon ne peut PAS bloquer qui que ce soit : le gate est
+// `rev-list -- decisions facts`, et un pathspec git est ancré à la racine de
+// l'arbre. `drafts/x/decisions/…` lui est donc invisible, comme `notes/` et
+// `journal/` le sont déjà — sans pathspec d'exclusion à maintenir en quatre
+// endroits, dont un littéral dupliqué.
+//
+// Ensuite, la promotion est un simple retrait de préfixe : `PathFor` rend déjà la
+// forme promue, et le préfixe est ajouté par-dessus. Le chemin n'est jamais
+// recalculé depuis le contenu, donc une date éditée entre-temps ne peut pas
+// déplacer l'entrée en douce.
+const draftsRoot = "drafts"
+
+func DraftOwner(p string) string {
+	parts := strings.SplitN(p, "/", 3)
+	if len(parts) < 3 || parts[0] != draftsRoot || parts[1] == "" {
+		return ""
+	}
+	return parts[1]
+}
+
+// Le chemin qu'aura ce brouillon une fois promu. Sur ce qui n'est pas un brouillon,
+// c'est l'identité.
+func StripDraft(p string) string {
+	if DraftOwner(p) == "" {
+		return p
+	}
+	return strings.SplitN(p, "/", 3)[2]
+}
+
+func DraftPathFor(actor, kind string, e Entry) (string, error) {
+	p, err := PathFor(kind, e)
+	if err != nil {
+		return "", err
+	}
+	return draftsRoot + "/" + Slugify(actor) + "/" + p, nil
+}
 
 // ---------------------------------------------------------------- YAML restreint
 

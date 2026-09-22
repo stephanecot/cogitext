@@ -55,7 +55,15 @@ func hookStart(root string, in hookInput) {
 		return
 	}
 	cfg := LoadConfig(root)
-	h := EnsureHead(root, false)
+	// Le brief porte les brouillons de son auteur : il dépend donc de QUI le lit, et le
+	// court-circuit de EnsureHead ne compare que les tips. On force la reconstruction
+	// quand l'identité a changé — ici seulement, une fois par session, sur le chemin
+	// déjà coûteux. Le hook de prompt garde son court-circuit intact.
+	stale := false
+	if prev := ReadHead(root); prev == nil || prev.Actor != Me(root) {
+		stale = true
+	}
+	h := EnsureHead(root, stale)
 	if h == nil {
 		return
 	}

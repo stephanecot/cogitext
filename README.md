@@ -45,8 +45,8 @@ copilot plugin install cogitex@cogitex
 ```
 
 The plugin brings the hooks, both skills, the curator agent and the `/sync`,
-`/find` and `/doctor` commands. Each project still has to be bootstrapped once,
-with `init`.
+`/find`, `/doctor` and `/draft` commands. Each project still has to be bootstrapped
+once, with `init`.
 
 ### Dropped into the project
 
@@ -85,12 +85,14 @@ Everyone who clones the project runs `init` once.
 
 ```
 init [--no-hooks]       create or join the branch, mount .cogitex, wire the hooks
-add decision|fact|note  record an entry (JSON on stdin) [--no-push]
+add decision|fact|note  record an entry (JSON on stdin) [--draft] [--no-push]
+promote <id>            turn a draft into a team entry (moves the gate)
+drop <id>               delete one of your own drafts
 push                    publish local commits in one move
 sync [--offline]        fetch, print the delta, re-pin the session
-find "<words>"          search the whole corpus
+find "<words>" [--all]  search the whole corpus
 show <id>               print one entry in full
-list decisions|facts|notes
+list decisions|facts|notes|drafts
 brief                   print the block injected at session start
 doctor                  check the corpus, the brief's cap and the platform
 compact                 compact the object database
@@ -98,6 +100,41 @@ debug on|off|tail|clear trace the interactions
 
 hook-start | hook-prompt | hook-guard    hook entry points
 ```
+
+## Drafts — yours alone
+
+Not everything is a rule yet. `--draft` writes the entry under
+`drafts/<you>/` instead:
+
+```sh
+cogitex add decision --draft     # same JSON, same validation
+cogitex list drafts
+cogitex promote <id>             # makes it binding for the team — moves the gate
+cogitex drop <id>                # it is yours, so deleting it is the normal move
+```
+
+A draft is injected into **your** sessions and nobody else's, it **never blocks
+anyone**, and being committed on the same branch it follows you from one machine
+to the next. Promotion is a file move: the entry keeps its bytes, and that is the
+moment — the only moment — the team is interrupted.
+
+Three properties are worth knowing precisely:
+
+- **It cannot block anyone, by construction.** The gate is
+  `git rev-list -- decisions facts`, and a git pathspec is anchored at the tree
+  root, so `drafts/…` is invisible to it — the same mechanism that already makes
+  `notes/` harmless. There is no exclusion list to keep in sync.
+- **Your drafts never cost the team a line.** They get their own budget in the
+  injected block (`draftsMaxBytes`, 900 by default). If the team's own rules no
+  longer fit, the drafts block disappears entirely rather than push one out.
+- **Private by tooling, not by mechanism.** The branch is pushed, so anyone who
+  opens the worktree can read someone else's drafts. Nothing injects them,
+  searches them or counts them — but no secret belongs in one, ever.
+
+Drafts need an identity, taken from `git config user.email`, overridable with
+`COGITEX_ACTOR` or an `actor` key in `.claude/cache/cogitex/config.json` (local,
+gitignored). Without one, **no draft is visible at all** — fail-closed, so that two
+machines without a git identity never share a namespace.
 
 ## Repository layout
 
@@ -112,7 +149,7 @@ install.sh / install.ps1 drop dist/ into a host project
 .claude-plugin/          the Claude Code manifest, and the marketplace for both
 .plugin/                 the GitHub Copilot manifest
 hooks/                   claude-hooks.json and copilot-hooks.json
-commands/                the /sync, /find and /doctor commands
+commands/                the /sync, /find, /doctor and /draft commands
 
 dist/                    what gets dropped into a project, as is
 ├── .claude/

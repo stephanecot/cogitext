@@ -24,16 +24,29 @@ const framing = "These rules were already settled by the team and they bind you.
 const staleness = "## Staleness\n" +
 	"This session is pinned to the context above. If a teammate publishes a decision\n" +
 	"or a fact, Edit/Write are denied until `cogitex sync`, which prints only the delta.\n" +
-	"Notes and journal entries never block anyone.\n" +
+	"Notes, drafts and journal entries never block anyone.\n" +
 	"Nothing above is the whole corpus: `cogitex find` covers 100% of it, including what\n" +
-	"was truncated here."
+	"was truncated here — the team's entries and your own drafts. Other people's drafts\n" +
+	"are theirs alone: you never see them, and they never bind you."
+
+// Le bloc des brouillons doit NIER le cadrage d'en-tête, qui dit « these rules bind
+// you » et colore tout ce qui suit. Sans cette contre-phrase, un griffonnage
+// personnel se lirait comme une règle que l'équipe a arrêtée.
+const draftFraming = "## Your drafts (yours alone — not team rules, they bind nobody)\n" +
+	"These are your own unfinished entries. The team has not agreed to them, other\n" +
+	"sessions never see them, and they never block anyone. Do not cite one as a rule\n" +
+	"and do not enforce one on anybody. `cogitex promote <id>` is what turns a draft\n" +
+	"into a team rule — that, and only that, makes it binding."
 
 func reaching(n Counts) string {
-	return "## Reaching the rest\n" +
+	s := "## Reaching the rest\n" +
 		"one entry in full          cogitex show <id>\n" +
 		"search everything          cogitex find \"<keywords>\"\n" +
-		fmt.Sprintf("notes (%d) and journal (%d), never auto-loaded   cogitex list notes\n", n.Notes, n.Journal) +
-		"record a new one           cogitex add decision|fact|note"
+		fmt.Sprintf("notes (%d) and journal (%d), never auto-loaded   cogitex list notes\n", n.Notes, n.Journal)
+	if n.Drafts > 0 {
+		s += fmt.Sprintf("your drafts (%d), yours and never shared      cogitex list drafts\n", n.Drafts)
+	}
+	return s + "record a new one           cogitex add decision|fact|note [--draft]"
 }
 
 func short(sha string) string {
@@ -67,46 +80,24 @@ func rankDecisions(ds []Entry) {
 	})
 }
 
-func RenderBrief(c Corpus, h *Head, cfg Config) string {
-	now := time.Now()
-	decisions := c.ActiveDecisions()
-	rankDecisions(decisions)
-	facts := c.LiveFacts(now)
-	sort.SliceStable(facts, func(i, j int) bool { return facts[i].Str("date") > facts[j].Str("date") })
-	if len(facts) > 10 {
-		facts = facts[:10]
+func ruleOf(e Entry) string {
+	if r := e.Str("decision"); r != "" {
+		return r
 	}
-	if len(decisions) == 0 && len(facts) == 0 {
-		return ""
+	if b := summarize(e.Str("body"), 120); b != "" {
+		return b
 	}
+	return e.Str("title")
+}
 
-	header := fmt.Sprintf("# Shared context (cogitex) — %s · %d decisions · %d facts · %d notes · %d journal",
-		short(h.Gate), h.N.Decisions, h.N.Facts, h.N.Notes, h.N.Journal)
-
-	var factLines []string
-	for _, f := range facts {
-		line := f.Str("date") + " · " + f.Str("title")
-		if aff := f.List("affects"); len(aff) > 0 {
-			line += " [" + strings.Join(aff, " ") + "]"
-		}
-		factLines = append(factLines, line)
-	}
-
-	fixed := strings.Join(append([]string{header, "", framing, "", "## Decisions (active)", "", "",
-		"## Facts (volatile)"}, append(factLines, "", reaching(h.N), "", staleness)...), "\n")
-	budget := cfg.BriefMaxBytes - len(fixed)
-
-	// On part de toutes les décisions et on en retire par le bas jusqu'à repasser sous
-	// le plafond. Rien n'est perdu : la queue « +N more » et `cogitex find` gardent 100 %
-	// du corpus atteignable.
+// On part de toutes les décisions et on en retire par le bas jusqu'à repasser sous le
+// plafond. Rien n'est perdu : la queue « +N more » et `cogitex find` gardent 100 % du
+// corpus atteignable.
+func fitDecisions(decisions []Entry, budget int) ([]string, int) {
 	var lines []string
 	used, kept := 0, 0
 	for _, d := range decisions {
-		rule := d.Str("decision")
-		if rule == "" {
-			rule = d.Str("title")
-		}
-		line := d.Str("__id") + " · " + rule
+		line := d.Str("__id") + " · " + ruleOf(d)
 		if used+len(line)+1 > budget-60 {
 			break
 		}
@@ -117,14 +108,105 @@ func RenderBrief(c Corpus, h *Head, cfg Config) string {
 	if kept < len(decisions) {
 		lines = append(lines, fmt.Sprintf("+%d more — cogitex find \"<keywords>\"", len(decisions)-kept))
 	}
+	return lines, kept
+}
 
-	out := append([]string{header, "", framing, "", "## Decisions (active)"}, lines...)
-	if len(factLines) > 0 {
-		out = append(out, "", "## Facts (volatile)")
-		out = append(out, factLines...)
+func fitDrafts(drafts []Entry, max int) []string {
+	var lines []string
+	used, kept := 0, 0
+	for _, d := range drafts {
+		line := d.Str("__id") + " · " + ruleOf(d)
+		if used+len(line)+1 > max {
+			break
+		}
+		lines = append(lines, line)
+		used += len(line) + 1
+		kept++
 	}
-	out = append(out, "", reaching(h.N), "", staleness)
-	return strings.Join(out, "\n")
+	if kept < len(drafts) {
+		lines = append(lines, fmt.Sprintf("+%d more — cogitex list drafts", len(drafts)-kept))
+	}
+	return lines
+}
+
+func RenderBrief(c Corpus, h *Head, cfg Config) string {
+	now := time.Now()
+	decisions := c.ActiveDecisions()
+	rankDecisions(decisions)
+	facts := c.LiveFacts(now)
+	sort.SliceStable(facts, func(i, j int) bool { return facts[i].Str("date") > facts[j].Str("date") })
+	if len(facts) > 10 {
+		facts = facts[:10]
+	}
+	// Un brief composé uniquement de MES griffonnages, sous un en-tête qui annonce des
+	// règles qui lient, serait pire que pas de brief du tout : la condition reste celle
+	// du corpus d'équipe.
+	if len(decisions) == 0 && len(facts) == 0 {
+		return ""
+	}
+
+	var factLines []string
+	for _, f := range facts {
+		line := f.Str("date") + " · " + f.Str("title")
+		if aff := f.List("affects"); len(aff) > 0 {
+			line += " [" + strings.Join(aff, " ") + "]"
+		}
+		factLines = append(factLines, line)
+	}
+
+	drafts := c.MyDrafts()
+	sort.SliceStable(drafts, func(i, j int) bool {
+		if drafts[i].Str("date") != drafts[j].Str("date") {
+			return drafts[i].Str("date") > drafts[j].Str("date")
+		}
+		return drafts[i].Str("__id") < drafts[j].Str("__id")
+	})
+	var draftBlock []string
+	if cfg.DraftsInBrief && len(drafts) > 0 {
+		draftBlock = fitDrafts(drafts, cfg.DraftsMaxBytes)
+	}
+
+	// Quand les brouillons cèdent la place, ils la cèdent ENTIÈREMENT : ni bloc, ni
+	// compte dans l'en-tête, ni ligne de navigation. Sinon leur simple existence
+	// coûterait encore une décision à l'équipe.
+	assemble := func(decisionLines, draftLines []string) string {
+		n := h.N
+		if len(draftLines) == 0 {
+			n.Drafts = 0
+		}
+		header := fmt.Sprintf("# Shared context (cogitex) — %s · %d decisions · %d facts · %d notes · %d journal",
+			short(h.Gate), n.Decisions, n.Facts, n.Notes, n.Journal)
+		if n.Drafts > 0 {
+			header += fmt.Sprintf(" · %d drafts", n.Drafts)
+		}
+		out := append([]string{header, "", framing, "", "## Decisions (active)"}, decisionLines...)
+		if len(factLines) > 0 {
+			out = append(out, "", "## Facts (volatile)")
+			out = append(out, factLines...)
+		}
+		if len(draftLines) > 0 {
+			out = append(out, "", draftFraming)
+			out = append(out, draftLines...)
+		}
+		return strings.Join(append(out, "", reaching(n), "", staleness), "\n")
+	}
+
+	budget := cfg.BriefMaxBytes - len(assemble(nil, draftBlock))
+	lines, kept := fitDecisions(decisions, budget)
+
+	// L'INVARIANT : `draftsMaxBytes` est un plafond, jamais un plancher. Si les règles
+	// de l'équipe ont dû être tronquées, les brouillons s'effacent — cadrage et
+	// navigation compris — et le brief redevient octet pour octet celui qu'il serait
+	// sans eux. Zéro ligne de décision perdue, que j'en aie un ou cinq cents.
+	//
+	// Leur auteur les retrouve par `cogitex list drafts`, que le brief lui rappelle
+	// dès que la place le permet.
+	if kept < len(decisions) && len(draftBlock) > 0 {
+		draftBlock = nil
+		budget = cfg.BriefMaxBytes - len(assemble(nil, nil))
+		lines, _ = fitDecisions(decisions, budget)
+	}
+	return assemble(lines, draftBlock)
 }
 
 type Change struct {

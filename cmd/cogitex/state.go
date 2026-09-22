@@ -51,6 +51,7 @@ type Counts struct {
 	Facts     int `json:"facts"`
 	Notes     int `json:"notes"`
 	Journal   int `json:"journal"`
+	Drafts    int `json:"drafts,omitempty"`
 }
 
 type Head struct {
@@ -60,6 +61,10 @@ type Head struct {
 	GateSeq int    `json:"gateSeq"`
 	BuiltAt int64  `json:"builtAt"`
 	N       Counts `json:"n"`
+	// Le brief dépend désormais de QUI le lit : il porte les brouillons de son
+	// auteur. Le court-circuit de EnsureHead ne compare que les tips, donc sans cette
+	// trace un changement d'identité continuerait de servir le brief de l'ancienne.
+	Actor string `json:"actor,omitempty"`
 }
 
 type Session struct {

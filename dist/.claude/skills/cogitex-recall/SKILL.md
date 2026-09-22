@@ -35,9 +35,19 @@ Check before choosing a library, a pattern or a convention. A colleague may have
 settled the question last week on another machine, and re-deriving it differently
 is the exact cost this branch exists to remove.
 
+`find` reaches everything this session can see — including the body of a note,
+which is where dead ends and their reasons live, and `rationale`, which is where
+the *why* lives. It stops at eight hits and says so; `--all` lifts that.
+
 **A rule found here binds you.** If your plan contradicts one, say so and stop —
 raise it with the user rather than quietly deviating. If the rule is wrong, the
 answer is a new decision that supersedes it, not an exception in the code.
+
+**A draft does not bind anyone**, not even its author. Entries whose id starts
+with `drafts/` are the current user's own unfinished thinking; the block injected
+at session start labels them as such. Never cite one as a team rule, and never
+enforce one on somebody else's code. Other people's drafts are invisible here —
+they are not part of this session's corpus, and that is deliberate.
 
 ## When a write is denied
 

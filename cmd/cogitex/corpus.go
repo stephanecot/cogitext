@@ -35,11 +35,24 @@ func walkFiles(dir string) []string {
 
 func ReadCorpus(root string) Corpus {
 	base := CogitexDir(root)
+	me := Me(root)
 	c := Corpus{}
-	for _, kind := range []string{"decisions", "facts", "notes"} {
-		for _, abs := range walkFiles(filepath.Join(base, kind)) {
+	for _, top := range []string{"decisions", "facts", "notes", draftsRoot} {
+		for _, abs := range walkFiles(filepath.Join(base, top)) {
 			rel := filepath.ToSlash(strings.TrimPrefix(abs, base+string(filepath.Separator)))
 			if !extRe.MatchString(rel) {
+				continue
+			}
+			// LE point de filtrage. Le brouillon de quelqu'un d'autre n'entre jamais dans
+			// le corpus : ni le brief, ni l'index, ni `find`, ni `list`, ni `doctor` ne le
+			// verront, et aucun d'eux n'a à le savoir.
+			//
+			// Filtrer ICI n'est sûr que parce que l'index dérivé vit dans
+			// `.claude/cache/`, gitignoré et jamais poussé : l'index d'une machine ne peut
+			// pas atteindre quelqu'un d'autre. Si ce cache devenait partagé, ce filtre
+			// devrait remonter au moment de la requête.
+			owner := DraftOwner(rel)
+			if owner != "" && (me == "" || owner != me) {
 				continue
 			}
 			b, err := os.ReadFile(abs)
@@ -53,8 +66,13 @@ func ReadCorpus(root string) Corpus {
 			e["__path"] = rel
 			e["__id"] = IDFromPath(rel)
 			e["__kind"] = KindFromPath(rel)
+			if owner != "" {
+				e["__draft"] = "true"
+			}
 			if e.Str("__kind") == "decision" && e.Str("domain") == "" {
-				if parts := strings.Split(rel, "/"); len(parts) > 1 {
+				// Sur le chemin SANS son préfixe : sinon le domaine d'un brouillon serait
+				// le nom de son auteur, qui finirait dans l'index et dans le foin de `find`.
+				if parts := strings.Split(StripDraft(rel), "/"); len(parts) > 1 {
 					e["domain"] = parts[1]
 				}
 			}
@@ -109,10 +127,16 @@ func countJournal(root, base string) int {
 	return total
 }
 
+func isDraft(e Entry) bool { return e.Str("__draft") == "true" }
+
+// Les décisions et les faits de l'ÉQUIPE. Sans l'exclusion des brouillons, mes
+// propres griffonnages gonfleraient les compteurs du brief et s'afficheraient sous
+// « Decisions (active) » comme des règles arrêtées — la confusion exacte que ce mode
+// doit empêcher.
 func (c Corpus) ActiveDecisions() []Entry {
 	var out []Entry
 	for _, e := range c.Entries {
-		if e.Str("__kind") == "decision" && IsActive(e) {
+		if e.Str("__kind") == "decision" && !isDraft(e) && IsActive(e) {
 			out = append(out, e)
 		}
 	}
@@ -122,7 +146,17 @@ func (c Corpus) ActiveDecisions() []Entry {
 func (c Corpus) LiveFacts(now time.Time) []Entry {
 	var out []Entry
 	for _, e := range c.Entries {
-		if e.Str("__kind") == "fact" && !FactExpired(e, now) {
+		if e.Str("__kind") == "fact" && !isDraft(e) && !FactExpired(e, now) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func (c Corpus) MyDrafts() []Entry {
+	var out []Entry
+	for _, e := range c.Entries {
+		if isDraft(e) {
 			out = append(out, e)
 		}
 	}
@@ -142,6 +176,9 @@ type IndexRow struct {
 	// `rationale`, `context` et `consequences`, et la moitié des recherches porte
 	// dessus. Les lister ici les rend trouvables sans alourdir la ligne de résultat.
 	Text string `json:"text,omitempty"`
+	// Sans ce booléen, `list decisions` mélangerait mes brouillons aux règles de
+	// l'équipe : un brouillon de décision EST de nature « decision ».
+	Draft bool `json:"draft,omitempty"`
 }
 
 // La ligne de résultat montre une phrase, pas un document : le corps d'une note peut
@@ -167,16 +204,16 @@ func BuildHead(root string, c Corpus, tip, local string) *Head {
 	now := time.Now()
 	notes := 0
 	for _, e := range c.Entries {
-		if e.Str("__kind") == "note" {
+		if e.Str("__kind") == "note" && !isDraft(e) {
 			notes++
 		}
 	}
 	h := &Head{
 		Tip: tip, Local: local,
 		Gate: GateOf(root, tip), GateSeq: GateSeqOf(root, tip),
-		BuiltAt: now.UnixMilli(),
+		BuiltAt: now.UnixMilli(), Actor: Me(root),
 		N: Counts{Decisions: len(c.ActiveDecisions()), Facts: len(c.LiveFacts(now)),
-			Notes: notes, Journal: c.Journal},
+			Notes: notes, Journal: c.Journal, Drafts: len(c.MyDrafts())},
 	}
 	_ = os.MkdirAll(CacheDir(root), 0o755)
 
@@ -190,7 +227,7 @@ func BuildHead(root string, c Corpus, tip, local string) *Head {
 		}
 		row := IndexRow{ID: e.Str("__id"), Kind: e.Str("__kind"), Domain: e.Str("domain"),
 			Status: e.Str("status"), Title: e.Str("title"), Rule: rule,
-			Tags: e.List("tags"), Date: e.Str("date"),
+			Tags: e.List("tags"), Date: e.Str("date"), Draft: isDraft(e),
 			Text: strings.Join(append([]string{e.Str("rationale"), e.Str("context"), e.Str("body")},
 				e.List("consequences")...), " ")}
 		b, _ := json.Marshal(row)
@@ -281,11 +318,15 @@ type Config struct {
 	BriefMaxBytes     int  `json:"briefMaxBytes"`
 	DeltaMaxEntries   int  `json:"deltaMaxEntries"`
 	MaxDeniesPerGate  int  `json:"maxDeniesPerGate"`
+	DraftsInBrief     bool `json:"draftsInBrief"`
+	// Un plafond, jamais un plancher : quand les règles de l'équipe ne tiennent plus,
+	// ce sont les brouillons qui cèdent la place.
+	DraftsMaxBytes int `json:"draftsMaxBytes"`
 }
 
 func LoadConfig(root string) Config {
 	c := Config{RefreshThrottleMs: 90000, FactsBlock: true, BriefMaxBytes: 6800,
-		DeltaMaxEntries: 8, MaxDeniesPerGate: 2}
+		DeltaMaxEntries: 8, MaxDeniesPerGate: 2, DraftsInBrief: true, DraftsMaxBytes: 900}
 	readJSON(filepath.Join(CacheDir(root), "config.json"), &c)
 	readJSON(filepath.Join(root, ".claude", "cogitex", "config.json"), &c)
 	return c

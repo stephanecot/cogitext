@@ -38,6 +38,37 @@ its writes until it syncs. A note blocks nobody.
 **When in doubt, write a note.** A note costs nobody anything. A decision recorded
 carelessly stops three colleagues from writing until they read it.
 
+## Not settled yet? Draft it
+
+`--draft` on any of the three writes the entry under `drafts/<you>/` instead. It
+lands in **your** session's context and nobody else's, it never blocks anyone, and
+it follows you from machine to machine.
+
+```sh
+echo '{"title":"…","type":"convention","domain":"api","decision":"…","rationale":"…"}' \
+  | cogitex add decision --draft
+cogitex list drafts
+cogitex promote <id>      # makes it a team rule — this is what interrupts everyone
+cogitex drop <id>         # yours, so deleting it is the normal move
+```
+
+Use it when the user is **thinking out loud** rather than stating a rule — "we
+should probably…", "I'd like us to…", "let's try…". Recording that as a decision
+would freeze three colleagues on an opinion nobody has agreed to; ignoring it
+loses it. A draft is the honest third answer.
+
+A draft passes the **same validation** as the real thing — the 110-character cap,
+English, required fields — so promoting it is a pure move, and you never discover
+three weeks later that it cannot be promoted.
+
+Two limits worth stating plainly:
+
+- **Private by tooling, not by mechanism.** The branch is pushed, so anyone who
+  opens the worktree can read `.cogitex/drafts/<someone-else>/`. Never put in a
+  draft what you would not put in a decision. No secrets, ever.
+- **A draft binds nobody, including you.** Never cite one to the user as if the
+  team had agreed to it, and never enforce one on somebody else's code.
+
 ## Running `cogitex`
 
 `cogitex` is a static binary committed under `.claude/cogitex/bin/`, one per

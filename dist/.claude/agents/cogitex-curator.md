@@ -100,6 +100,11 @@ These are refusals, not judgement calls.
 
 ## Conflicts: know which kind you are facing
 
+Never promote someone's draft on your own initiative. `cogitex promote` is what
+turns a personal note-to-self into a rule that pauses everyone else's writes, and
+that decision belongs to the person who wrote it — say a draft looks ready, and
+stop there.
+
 Two different things wear the same word, and only one is your job.
 
 - **Git conflicts are nearly impossible here by construction** — one file per entry,

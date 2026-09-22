@@ -56,5 +56,21 @@ Use `add fact` for something that changed and breaks other people's assumptions
 reason. **When in doubt, write a note**: a note blocks nobody, a decision pauses
 every teammate's writes until they read it.
 
+## When the user is thinking out loud
+
+"we should probably…", "let's try…" — that is not a rule yet. Add `--draft` and it
+goes under `drafts/<them>/`: injected into their own sessions, invisible to
+everyone else, blocking nobody, and following them across machines.
+
+```sh
+cogitex add decision --draft     # same JSON, same validation
+cogitex list drafts
+cogitex promote <id>             # THIS is what makes it binding for the team
+```
+
+An entry whose id starts with `drafts/` binds nobody, not even its author. Never
+cite one as a team rule. And never put a secret in one: the branch is pushed, so a
+draft is private by tooling, not by mechanism.
+
 Never record a rule the user did not state, never edit `.cogitex/` by hand, and
 never put a secret in an entry — the branch is pushed.

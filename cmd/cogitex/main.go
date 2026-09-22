@@ -35,7 +35,7 @@ func die(f string, a ...any)  { warn("cogitex : "+f, a...); os.Exit(1) }
 // l'argument suivant : `hook-start --copilot /chemin/du/projet` perdrait sa racine.
 var boolFlags = map[string]bool{
 	"--offline": true, "--no-push": true, "--copilot": true, "--claude": true,
-	"--no-hooks": true, "--force": true, "--all": true,
+	"--no-hooks": true, "--force": true, "--all": true, "--draft": true,
 }
 
 func hasFlag(n string) bool {
@@ -102,18 +102,23 @@ func resolveRoot(explicit string) string {
 const help = `cogitex — contexte partagé sur la branche orpheline « context »
 
   init [--no-hooks]       créer ou rejoindre la branche, monter .cogitex, câbler les hooks
-  add decision|fact|note  enregistrer une entrée (JSON sur stdin) [--no-push]
+  add decision|fact|note  enregistrer une entrée (JSON sur stdin) [--draft] [--no-push]
+  promote <id>            transformer un brouillon en entrée d'équipe (déplace le gate)
+  drop <id>               supprimer un de tes brouillons
   push                    publier les commits locaux en un seul mouvement
   sync [--offline]        récupérer, afficher le delta, ré-épingler la session
   find "<mots>" [--all]   chercher dans tout le corpus
   show <id>               afficher une entrée en entier
-  list decisions|facts|notes
+  list decisions|facts|notes|drafts
   brief                   afficher le bloc injecté au démarrage
   doctor                  vérifier le corpus, le plafond du brief et la plateforme
   compact                 compacter la base d'objets
   debug on|off|tail|clear tracer les interactions dans .claude/cache/cogitex/cogitex.log
 
   hook-start | hook-prompt | hook-guard    points d'entrée des hooks
+
+Un brouillon (--draft) n'appartient qu'à toi : il entre dans TON brief, reste
+invisible aux autres sessions, et ne bloque personne tant qu'il n'est pas promu.
 
 Les hooks servent Claude Code et GitHub Copilot : le dialecte est reconnu sur le
 payload reçu, et --copilot / --claude le forcent si besoin.`
@@ -160,6 +165,10 @@ func main() {
 		cmdInit()
 	case "add":
 		cmdAdd()
+	case "promote":
+		cmdPromote()
+	case "drop":
+		cmdDrop()
 	case "push":
 		cmdPush()
 	case "sync":
@@ -212,6 +221,9 @@ Orphan branch. It carries no code and is never merged into the main branch.
 - ` + "`facts/<date>-<slug>.yaml`" + ` — volatile facts, expiring on their own (ttl_days).
 - ` + "`notes/<date>-<slug>.md`" + ` — ideas, backlog, and above all dead ends with their reason.
 - ` + "`journal/<YYYY-MM>/<actor>.ndjson`" + ` — who did what. One file per actor.
+- ` + "`drafts/<actor>/…`" + ` — personal. Injected into their author's sessions only,
+  never into anyone else's, and they block nobody until ` + "`cogitex promote`" + `.
+  Readable by anyone who opens this branch: private by tooling, not by mechanism.
 
 Everything here is written in English. Do not hand-edit: the identifier is the path,
 and decisions and facts make other people's sessions stale.
@@ -335,7 +347,7 @@ func cmdInit() {
 			seeded = true
 		}
 	}
-	for _, d := range []string{"decisions", "facts", "notes", "journal"} {
+	for _, d := range []string{"decisions", "facts", "notes", "journal", draftsRoot} {
 		_ = os.MkdirAll(filepath.Join(wt, d), 0o755)
 	}
 	if seeded {
@@ -452,6 +464,41 @@ func gitUser() string {
 		}
 	})
 	return gitUserVal
+}
+
+// L'acteur : ce qui donne à un brouillon son propriétaire, et ce qui décide lesquels
+// cette machine a le droit de voir.
+//
+// Renvoie "" quand il n'y a pas d'identité — et "" signifie AUCUN brouillon visible,
+// jamais « tous ». Sans cela, deux développeurs sans email git partageraient
+// `drafts/anonyme/` et se verraient mutuellement, ce qui est exactement la propriété
+// que le mode brouillon existe pour garantir. Fermé par défaut, y compris en CI.
+//
+// L'override se lit dans le config MACHINE-LOCAL, jamais dans celui qui est commité :
+// une identité personnelle n'a rien à faire dans un fichier partagé par l'équipe.
+var (
+	meOnce sync.Once
+	meVal  string
+)
+
+func Me(root string) string {
+	meOnce.Do(func() {
+		if v := os.Getenv("COGITEX_ACTOR"); v != "" {
+			meVal = Slugify(v)
+			return
+		}
+		var local struct {
+			Actor string `json:"actor"`
+		}
+		if readJSON(filepath.Join(CacheDir(root), "config.json"), &local) && local.Actor != "" {
+			meVal = Slugify(local.Actor)
+			return
+		}
+		if u := gitUser(); u != "anonyme" {
+			meVal = Slugify(u)
+		}
+	})
+	return meVal
 }
 
 // Un push non forcé ne réussit que si le tip distant est un ancêtre de ce qu'on
@@ -579,7 +626,23 @@ func cmdAdd() {
 		die("entrée invalide :\n  - %s", strings.Join(errs, "\n  - "))
 	}
 
-	rel, err := PathFor(kind, e)
+	draft := hasFlag("draft")
+	var rel string
+	var err error
+	if draft {
+		me := Me(root)
+		if me == "" {
+			// Un brouillon est DÉFINI par son propriétaire. Sans identité, il irait dans
+			// un espace commun où deux personnes se verraient — exactement la propriété
+			// que ce mode existe pour garantir.
+			die("un brouillon a un propriétaire, et cette machine n'en déclare aucun.\n" +
+				"  `git config user.email toi@exemple.fr`, ou la clé `actor` dans\n" +
+				"  .claude/cache/cogitex/config.json (local, gitignoré)")
+		}
+		rel, err = DraftPathFor(me, kind, e)
+	} else {
+		rel, err = PathFor(kind, e)
+	}
 	if err != nil {
 		die("%v", err)
 	}
@@ -588,12 +651,7 @@ func cmdAdd() {
 	// On discrimine par l'acteur plutôt que par un compteur — un compteur exigerait
 	// de lire l'état global, ce qui recrée exactement la course qu'on évite.
 	if _, err := os.Stat(filepath.Join(wt, rel)); err == nil {
-		ext := filepath.Ext(rel)
-		suffix := Slugify(gitUser())
-		if len(suffix) > 4 {
-			suffix = suffix[:4]
-		}
-		rel = strings.TrimSuffix(rel, ext) + "-" + suffix + ext
+		rel = disambiguate(rel, draft)
 		if _, err := os.Stat(filepath.Join(wt, rel)); err == nil {
 			die("une entrée identique existe déjà : %s", rel)
 		}
@@ -616,8 +674,16 @@ func cmdAdd() {
 
 	var body string
 	if kind == "note" {
-		meta := Entry{"title": e["title"], "date": e["date"], "author": e["author"],
-			"status": e["status"], "tags": e["tags"]}
+		// Le front-matter porte TOUT sauf la prose : une liste fixe de cinq champs
+		// jetait en silence ce que l'appelant avait fourni — et, accessoirement,
+		// privait la note de son `id`, que `promote` doit pouvoir corriger.
+		meta := Entry{}
+		for k, v := range e {
+			if k == "body" || strings.HasPrefix(k, "__") {
+				continue
+			}
+			meta[k] = v
+		}
 		body = "---\n" + Emit(meta) + "---\n\n" + e.Str("body") + "\n"
 	} else {
 		body = Emit(e)
@@ -634,15 +700,13 @@ func cmdAdd() {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(wt, jrel)), 0o755); err != nil {
 			return err
 		}
-		line, _ := json.Marshal(map[string]any{"id": ULID(time.Now().UnixMilli(), rand.Int),
-			"ts": time.Now().UTC().Format(time.RFC3339), "actor": gitUser(), "kind": kind,
-			"ref": rel, "msg": e.Str("title")})
-		f, err := os.OpenFile(filepath.Join(wt, jrel), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
+		entry := map[string]any{"kind": kind, "ref": rel, "msg": e.Str("title")}
+		if draft {
+			entry["draft"] = true
+		}
+		if err := appendJournal(wt, jrel, entry); err != nil {
 			return err
 		}
-		_, _ = f.Write(append(line, '\n'))
-		f.Close()
 		paths := []string{rel, jrel}
 		if supPath != "" {
 			b, err := os.ReadFile(filepath.Join(wt, supPath))
@@ -666,6 +730,10 @@ func cmdAdd() {
 	}
 
 	say("cogitex : %s", rel)
+	if draft {
+		say("cogitex : brouillon — visible de toi seul, il ne bloque personne. " +
+			"`cogitex promote` le rendra opposable.")
+	}
 	if supPath != "" {
 		say("cogitex : %s passe à `superseded`.", IDFromPath(supPath))
 	}
@@ -679,6 +747,169 @@ func cmdAdd() {
 	// gate N fois, donc bloquerait N fois chaque coéquipier pour un seul apport.
 	if hasFlag("no-push") {
 		say("cogitex : commit local, non publié (`cogitex push` pour le lot).")
+		return
+	}
+	publish(rel)
+}
+
+// ------------------------------------------------------------------ brouillons
+
+// La promotion est la seule opération qui coûte un tour à TOUTE l'équipe. Elle
+// mérite donc le contrôle le plus bête et le moins cher qui soit : est-ce que
+// quelqu'un n'aurait pas déjà dit ça ? L'index est déjà sur le disque, ce contrôle
+// ne coûte aucun sous-processus.
+func warnIfDuplicate(e Entry) {
+	q := strings.Fields(strings.ToLower(e.Str("title") + " " + e.Str("decision")))
+	best, bestN := IndexRow{}, 0
+	for _, r := range ReadIndex(root) {
+		if r.Draft || r.Kind != "decision" || !rowActive(r) {
+			continue
+		}
+		hay := strings.ToLower(r.ID + " " + r.Title + " " + r.Rule)
+		n := 0
+		for _, t := range q {
+			// Les mots courts ne discriminent rien : « the », « a », « is » feraient
+			// ressembler n'importe quelle règle à n'importe quelle autre.
+			if len(t) > 3 && strings.Contains(hay, t) {
+				n++
+			}
+		}
+		if n > bestN {
+			best, bestN = r, n
+		}
+	}
+	if bestN >= 2 {
+		die("« %s » dit peut-être déjà ça.\n  `cogitex show %s` pour vérifier, "+
+			"ou `--force` pour promouvoir quand même.", best.ID, best.ID)
+	}
+}
+
+func myDraft(verb, id string) string {
+	if !WorktreeReady(root) {
+		die("worktree absent — lance `cogitex init`")
+	}
+	if me := Me(root); me == "" || DraftOwner(id) != me {
+		die("`%s` ne touche que TES brouillons — « %s » n'en est pas un", verb, id)
+	}
+	rel, ok := resolveEntry(root, id)
+	if !ok {
+		die("brouillon inconnu : %s", id)
+	}
+	return rel
+}
+
+func cmdPromote() {
+	p := positional()
+	if len(p) == 0 {
+		die("usage : cogitex promote <id-du-brouillon>")
+	}
+	rel := myDraft("promote", p[0])
+	wt := CogitexDir(root)
+	src, err := os.ReadFile(filepath.Join(wt, rel))
+	if err != nil {
+		die("%v", err)
+	}
+	kind := KindFromPath(rel)
+	e := Parse(string(src))
+	if strings.HasSuffix(rel, ".md") && e.Str("body") == "" {
+		e["body"] = MarkdownBody(src)
+	}
+	// Le brouillon a déjà passé `Validate` à l'écriture. Le rejouer ici n'est pas une
+	// porte, c'est un fil de détente : s'il casse, le fichier a été édité à la main.
+	if errs := Validate(kind, e); len(errs) > 0 {
+		die("brouillon invalide, promotion refusée :\n  - %s", strings.Join(errs, "\n  - "))
+	}
+
+	dst := StripDraft(rel)
+	if fileExists(filepath.Join(wt, dst)) {
+		dst = disambiguate(dst, false)
+		if fileExists(filepath.Join(wt, dst)) {
+			die("une entrée identique existe déjà : %s", dst)
+		}
+	}
+	if !hasFlag("force") && kind == "decision" {
+		warnIfDuplicate(e)
+	}
+
+	newID := IDFromPath(dst)
+	jrel := JournalPathFor(gitUser(), e.Str("date"))
+	err = WithLock(root, func() error {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(wt, dst)), 0o755); err != nil {
+			return err
+		}
+		// `git mv` plutôt qu'une réécriture : les octets sont préservés, les deux côtés
+		// sont indexés, et le renommage est enregistré comme tel.
+		if r := runGit([]string{"mv", "--", rel, dst}, gitOpts{Dir: wt, Timeout: 10 * time.Second}); !r.OK {
+			return fmt.Errorf("git mv : %s", firstLine(r.Err))
+		}
+		// La SEULE modification d'octets : la ligne `id:`. Jamais un Parse + Emit, qui
+		// détruirait le corps markdown d'une note.
+		out, ok := ReplaceScalar(src, "id", newID)
+		if !ok {
+			out = src // une entrée sans `id` : rien à corriger
+		}
+		if err := os.WriteFile(filepath.Join(wt, dst), out, 0o644); err != nil {
+			return err
+		}
+		if err := appendJournal(wt, jrel, map[string]any{"kind": kind, "ref": dst,
+			"from": rel, "msg": e.Str("title"), "act": "promote"}); err != nil {
+			return err
+		}
+		// Pas `rel` : `git mv` a déjà indexé les deux côtés du renommage, et un
+		// `git add` sur un chemin qui n'existe plus échoue au lieu de ne rien faire.
+		commitCtx([]string{dst, jrel}, kind+": "+e.Str("title"))
+		return nil
+	})
+	if err != nil {
+		die("%v", err)
+	}
+
+	say("cogitex : %s → %s", p[0], newID)
+	if kind == "decision" || kind == "fact" {
+		say("cogitex : le gate a bougé — les sessions de l'équipe se resynchroniseront.")
+	}
+	Trace(root, "promote", map[string]any{"from": rel, "to": dst, "kind": kind})
+	h := EnsureHead(root, true)
+	// Sans ce ré-épinglage, je me bloquerais moi-même au premier Edit suivant : la
+	// promotion vient de déplacer le gate.
+	repinLatest(h)
+	if hasFlag("no-push") {
+		say("cogitex : commit local, non publié (`cogitex push` pour le lot).")
+		return
+	}
+	publish(dst)
+}
+
+// Une décision d'équipe est immuable et se supersède — l'historique du raisonnement
+// a de la valeur pour les autres, et la supprimer déplacerait le gate, donc
+// bloquerait trois collègues pour une suppression. Un brouillon n'engage personne :
+// le supprimer est le geste normal.
+func cmdDrop() {
+	p := positional()
+	if len(p) == 0 {
+		die("usage : cogitex drop <id-du-brouillon>")
+	}
+	rel := myDraft("drop", p[0])
+	wt := CogitexDir(root)
+	jrel := JournalPathFor(gitUser(), Today())
+	err := WithLock(root, func() error {
+		if err := os.Remove(filepath.Join(wt, rel)); err != nil {
+			return err
+		}
+		if err := appendJournal(wt, jrel, map[string]any{"kind": KindFromPath(rel),
+			"ref": rel, "act": "drop"}); err != nil {
+			return err
+		}
+		commitCtx([]string{rel, jrel}, "draft: drop "+p[0])
+		return nil
+	})
+	if err != nil {
+		die("%v", err)
+	}
+	say("cogitex : %s supprimé.", p[0])
+	Trace(root, "drop", map[string]any{"ref": rel})
+	EnsureHead(root, true)
+	if hasFlag("no-push") {
 		return
 	}
 	publish(rel)
@@ -871,6 +1102,9 @@ func cmdFind() {
 		if h.r.Status != "" {
 			status = "/" + h.r.Status
 		}
+		if h.r.Draft {
+			status += ", draft — binds nobody"
+		}
 		body := h.r.Rule
 		if body == "" {
 			body = h.r.Title
@@ -887,6 +1121,44 @@ func cmdFind() {
 // Un statut vide vaut « actif » : c'est la règle de `IsActive`, et les faits comme
 // les notes n'en portent pas.
 func rowActive(r IndexRow) bool { return r.Status == "" || contains(Active, r.Status) }
+
+// Une ligne de journal : qui a fait quoi, quand. L'identifiant ULID est trié par le
+// temps, ce qui rend la fusion « union » du shard correcte quel que soit
+// l'entrelacement.
+func appendJournal(wt, jrel string, fields map[string]any) error {
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(wt, jrel)), 0o755); err != nil {
+		return err
+	}
+	fields["id"] = ULID(time.Now().UnixMilli(), rand.Int)
+	fields["ts"] = time.Now().UTC().Format(time.RFC3339)
+	fields["actor"] = gitUser()
+	line, _ := json.Marshal(fields)
+	f, err := os.OpenFile(filepath.Join(wt, jrel), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	_, _ = f.Write(append(line, '\n'))
+	return f.Close()
+}
+
+// Le suffixe qui départage deux entrées de même jour, même domaine, même slug.
+//
+// Pour un brouillon, l'acteur est DÉJÀ dans le chemin : le reprendre ici ne
+// discriminerait rien, et deux machines du même auteur écriraient le même chemin
+// avec deux contenus — un vrai conflit au push. Le nom de machine, lui, les sépare.
+func disambiguate(rel string, draft bool) string {
+	suffix := Slugify(gitUser())
+	if draft {
+		if hn, err := os.Hostname(); err == nil && hn != "" {
+			suffix = Slugify(hn)
+		}
+	}
+	if len(suffix) > 4 {
+		suffix = suffix[:4]
+	}
+	ext := filepath.Ext(rel)
+	return strings.TrimSuffix(rel, ext) + "-" + suffix + ext
+}
 
 // L'identifiant est le chemin, à l'extension près : la résolution est donc trois
 // `stat`, sans index ni git.
@@ -923,7 +1195,10 @@ func cmdList() {
 	EnsureHead(root, false)
 	var rows []IndexRow
 	for _, r := range ReadIndex(root) {
-		if r.Kind == kind {
+		// `!r.Draft` porte tout le poids : un brouillon de décision a bien la nature
+		// « decision », et sans ce filtre `list decisions` mêlerait mes griffonnages aux
+		// règles de l'équipe.
+		if kind == "draft" && r.Draft || kind != "draft" && r.Kind == kind && !r.Draft {
 			rows = append(rows, r)
 		}
 	}
@@ -984,8 +1259,18 @@ func cmdDoctor() {
 			problems = append(problems, e.Str("__path")+" : "+strings.Join(errs, " ; "))
 		}
 	}
+	pending := 0
 	for _, e := range c.Entries {
 		if e.Str("__kind") != "decision" {
+			continue
+		}
+		// Un brouillon qui porte `supersedes` n'a encore supersédé personne : le
+		// signaler serait un faux positif, et un doctor rouge en permanence est un
+		// doctor que plus personne ne lit.
+		if isDraft(e) {
+			if e.Str("supersedes") != "" {
+				pending++
+			}
 			continue
 		}
 		sup := e.Str("supersedes")
@@ -1036,6 +1321,14 @@ func cmdDoctor() {
 			"en git < 2.48 ne peut plus lancer AUCUNE commande git dans ce dépôt — `cogitex init` le retire")
 	}
 
+	if h.N.Drafts > 0 {
+		line := fmt.Sprintf("cogitex : %d brouillon(s) à toi, hors du corpus de l'équipe", h.N.Drafts)
+		if pending > 0 {
+			line += fmt.Sprintf(", dont %d superséderai(en)t une décision active", pending)
+		}
+		say("%s.", line)
+	}
+	orphanDrafts(root)
 	say("cogitex : brief %d/%d octets · %d décisions · %d faits · %d notes",
 		size, cfg.BriefMaxBytes, h.N.Decisions, h.N.Facts, h.N.Notes)
 	if len(problems) == 0 {
@@ -1046,6 +1339,42 @@ func cmdDoctor() {
 		warn("  ✗ %s", p)
 	}
 	os.Exit(1)
+}
+
+// Un changement d'adresse e-mail rend invisibles les brouillons déjà écrits : ils
+// sont filtrés par le préfixe du chemin, qui porte l'ancienne identité. Le corpus ne
+// peut donc pas les voir — d'où cette lecture directe, qui transforme une perte
+// silencieuse en indication imprimée.
+func orphanDrafts(root string) {
+	me := Me(root)
+	entries, err := os.ReadDir(filepath.Join(CogitexDir(root), draftsRoot))
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == me {
+			continue
+		}
+		files := walkFiles(filepath.Join(CogitexDir(root), draftsRoot, e.Name()))
+		if len(files) == 0 {
+			continue
+		}
+		// Les brouillons des autres ne nous regardent pas : on ne signale que ceux qui
+		// portent NOTRE `author`, c'est-à-dire les nôtres, écrits sous une adresse
+		// e-mail qui a changé depuis. Une seule entrée lue par identité suffit à
+		// trancher, donc le contrôle reste borné.
+		if Parse(readFileString(files[0])).Str("author") != gitUser() {
+			continue
+		}
+		say("cogitex : %d brouillon(s) sous l'identité « %s », qui portent ton nom — "+
+			"pose `actor` dans .claude/cache/cogitex/config.json pour les retrouver.",
+			len(files), e.Name())
+	}
+}
+
+func readFileString(p string) string {
+	b, _ := os.ReadFile(p)
+	return string(b)
 }
 
 // Une écriture produit des objets libres ; gc.auto est désactivé sur nos appels pour
