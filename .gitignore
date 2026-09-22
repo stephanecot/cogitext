@@ -1,0 +1,6 @@
+# Worktree du contexte partagé, monté par `cogit init` dans le projet hôte.
+/.cogit/
+# Cache des sessions Claude Code.
+/.claude/cache/
+# Réglages locaux écrits par `cogit init` : ils désignent un binaire par OS.
+/.claude/settings.local.json

@@ -1,0 +1,10 @@
+# Les binaires cogit ne doivent subir aucune conversion de fins de ligne. Git les
+# traiterait sinon comme du texte sur un clone Windows et les corromprait.
+dist/.claude/cogit/bin/** binary
+
+# Les lanceurs gardent les fins de ligne de leur plateforme : un `.sh` en CRLF
+# n'est pas exécutable sous Unix, un `.cmd` en LF se comporte mal sous cmd.exe.
+dist/.claude/cogit/cogit.sh text eol=lf
+dist/.claude/cogit/cogit.cmd text eol=crlf
+build.sh text eol=lf
+*.go text eol=lf
