@@ -4,3 +4,4 @@
 {"actor":"stephanecot","id":"01M358N1ENVJ2FT9TKM26W0RDZ","kind":"decision","msg":"Static binary, stdlib only","ref":"decisions/build/2026-09-22-static-binary-stdlib-only.yaml","ts":"2026-09-22T19:14:30Z"}
 {"actor":"stephanecot","id":"01M358N1H4N01Y9987XBT46251","kind":"decision","msg":"Portable hook command","ref":"decisions/hooks/2026-09-22-portable-hook-command.yaml","ts":"2026-09-22T19:14:31Z"}
 {"actor":"stephanecot","id":"01M358N1KP3N7V1MN483EA08HB","kind":"decision","msg":"Agent dialects stay isolated","ref":"decisions/hooks/2026-09-22-agent-dialects-stay-isolated.yaml","ts":"2026-09-22T19:14:31Z"}
+{"actor":"stephanecot","id":"01M358N1P9ZMQSB9GV79YHAVAK","kind":"decision","msg":"Never use relative worktree paths","ref":"decisions/git/2026-09-22-never-use-relative-worktree-paths.yaml","ts":"2026-09-22T19:14:31Z"}

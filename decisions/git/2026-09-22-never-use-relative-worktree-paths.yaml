@@ -1,0 +1,11 @@
+id: decisions/git/2026-09-22-never-use-relative-worktree-paths
+title: "Never use relative worktree paths"
+type: technical
+status: active
+scope: domain
+domain: git
+date: 2026-09-22
+decision: "Never pass --relative-paths to git worktree add: it breaks every git below 2.48 in the host repo."
+rationale: "It writes extensions.relativeWorktrees into the host .git/config, and older git then refuses every command, for a teammate who did not cause it."
+refs:
+  - cmd/cogitex/main.go
