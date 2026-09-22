@@ -1,0 +1,14 @@
+id: decisions/hooks/2026-09-22-agent-dialects-stay-isolated
+title: "Agent dialects stay isolated"
+type: architecture
+status: active
+scope: domain
+domain: hooks
+date: 2026-09-22
+decision: "Agent-specific differences live only in agent.go plus one hooks file per agent."
+rationale: "Porting to a third agent must mean adding a dialect, nothing else; the core never learns which agent calls it."
+affects:
+  - cmd/cogitex/agent.go
+  - cmd/cogitex/hooks.go
+refs:
+  - cmd/cogitex/agent.go
