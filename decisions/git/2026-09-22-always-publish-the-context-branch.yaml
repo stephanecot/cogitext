@@ -1,0 +1,9 @@
+id: decisions/git/2026-09-22-always-publish-the-context-branch
+title: "Always publish the context branch"
+type: convention
+status: active
+scope: global
+domain: git
+date: 2026-09-22
+decision: "Every commit on the context branch is pushed; --no-push batches must end with cogitex push."
+rationale: "Teammates only get the shared context by fetching it: an unpublished entry exists for nobody else, and their sessions keep working against rules they cannot see."
