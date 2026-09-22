@@ -200,7 +200,10 @@ func TestDeltaIsBounded(t *testing.T) {
 func buildCtx(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "ctx")
-	out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput()
+	// -buildvcs=false : la suite ne doit pas dépendre de l'état du dépôt qui l'héberge.
+	// Un git qui bronche sur ce dépôt faisait échouer la compilation, donc TOUS les
+	// tests, pour une raison sans rapport avec le code testé.
+	out, err := exec.Command("go", "build", "-buildvcs=false", "-o", bin, ".").CombinedOutput()
 	if err != nil {
 		t.Fatalf("build : %v\n%s", err, out)
 	}
@@ -222,6 +225,81 @@ func runHook(t *testing.T, bin, sub, root, payload string) string {
 	cmd.Stdin = strings.NewReader(payload)
 	out, _ := cmd.Output() // le code de sortie doit toujours être 0 ; on vérifie stdout
 	return string(out)
+}
+
+// ------------------------------------------------------- piloter un vrai corpus
+
+// Un dépôt avec la branche `context` montée et une identité git connue — ce que
+// `emptyRepo` ne donne pas, et dont tout ce qui écrit dans le corpus a besoin.
+//
+// `--root` plutôt que le répertoire courant : le test reste insensible à
+// CLAUDE_PROJECT_DIR, que l'agent qui le lance a peut-être exporté.
+func initRepo(t *testing.T, bin string) string {
+	t.Helper()
+	dir := emptyRepo(t)
+	for _, kv := range [][2]string{{"user.email", "tester@cogitex.local"}, {"user.name", "tester"}} {
+		if out, err := exec.Command("git", "-C", dir, "config", kv[0], kv[1]).CombinedOutput(); err != nil {
+			t.Fatalf("git config %s : %v\n%s", kv[0], err, out)
+		}
+	}
+	run(t, bin, dir, "init", "--no-hooks")
+	return dir
+}
+
+func run(t *testing.T, bin, root string, args ...string) string {
+	t.Helper()
+	out, err := tryRun(bin, root, args...)
+	if err != nil {
+		t.Fatalf("cogitex %s : %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return out
+}
+
+func tryRun(bin, root string, args ...string) (string, error) {
+	cmd := exec.Command(bin, append(args, "--root", root)...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func addEntry(t *testing.T, bin, root, kind, payload string, flags ...string) string {
+	t.Helper()
+	cmd := exec.Command(bin, append([]string{"add", kind, "--no-push", "--root", root}, flags...)...)
+	cmd.Stdin = strings.NewReader(payload)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("add %s : %v\n%s", kind, err, out)
+	}
+	return string(out)
+}
+
+const decisionB = `id: decisions/api/2026-01-01-b
+title: B
+type: convention
+status: active
+scope: global
+domain: api
+date: 2026-01-01
+decision: The rule a teammate just landed.
+`
+
+// Écrit et commite une entrée DIRECTEMENT dans le worktree, comme le ferait
+// l'atterrissage d'un fetch : le tip bouge sans que cette machine soit passée par
+// `add`.
+func landEntry(t *testing.T, root, rel, body string) {
+	t.Helper()
+	wt := filepath.Join(root, ".cogitex")
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(wt, rel)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, rel), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "--", rel}, {"commit", "-q", "-m", "landed"}} {
+		c := exec.Command("git", append([]string{"-C", wt}, args...)...)
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %s : %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
 }
 
 func TestGuardFailsOpen(t *testing.T) {
@@ -432,5 +510,114 @@ func TestStdinToleratesAUTF8BOM(t *testing.T) {
 	}
 	if d["hookSpecificOutput"].(map[string]any)["permissionDecision"] != "deny" {
 		t.Fatalf("attendu deny malgré le BOM, obtenu : %s", out)
+	}
+}
+
+// ------------------------------------------------------------- dérivés cohérents
+
+// Le bug qu'on ne voit jamais : une commande avance head.json sans régénérer le
+// brief, et la session suivante reçoit l'ANCIEN bloc — le court-circuit de
+// EnsureHead est satisfait (tip identique, brief présent) et ne reconstruit rien.
+func TestAReadCommandNeverLeavesTheBriefBehind(t *testing.T) {
+	bin := buildCtx(t)
+	root := initRepo(t, bin)
+	addEntry(t, bin, root, "decision",
+		`{"title":"First","type":"convention","domain":"api","scope":"global","decision":"The first rule.","rationale":"Because."}`)
+
+	// Un coéquipier publie ; le fetch atterrit.
+	landEntry(t, root, "decisions/api/2026-01-01-b.yaml", decisionB)
+
+	for _, cmd := range []string{"brief", "doctor"} {
+		t.Run(cmd, func(t *testing.T) {
+			root := initRepo(t, bin)
+			addEntry(t, bin, root, "decision",
+				`{"title":"First","type":"convention","domain":"api","scope":"global","decision":"The first rule.","rationale":"Because."}`)
+			landEntry(t, root, "decisions/api/2026-01-01-b.yaml", decisionB)
+
+			run(t, bin, root, cmd)
+
+			brief, err := os.ReadFile(filepath.Join(root, ".claude", "cache", "cogitex", "brief.txt"))
+			if err != nil {
+				t.Fatalf("brief.txt absent après `%s` : %v", cmd, err)
+			}
+			if !strings.Contains(string(brief), "teammate just landed") {
+				t.Fatalf("`%s` a avancé head.json en laissant le brief en arrière :\n%s", cmd, brief)
+			}
+		})
+	}
+}
+
+// Ne tester que le brief rendait la disparition de l'index définitive : `find` et
+// `list` répondaient « aucune entrée » pour toujours.
+func TestASuppressedIndexIsRebuilt(t *testing.T) {
+	bin := buildCtx(t)
+	root := initRepo(t, bin)
+	addEntry(t, bin, root, "decision",
+		`{"title":"Slug identifiers","type":"convention","domain":"api","scope":"global","decision":"Identifiers are slugs.","rationale":"Collisions."}`)
+
+	index := filepath.Join(root, ".claude", "cache", "cogitex", "index.ndjson")
+	if err := os.Remove(index); err != nil {
+		t.Fatal(err)
+	}
+	if out := run(t, bin, root, "find", "slug"); !strings.Contains(out, "slug-identifiers") {
+		t.Fatalf("l'index doit se reconstruire tout seul, obtenu :\n%s", out)
+	}
+	if !fileExists(index) {
+		t.Fatal("index.ndjson n'a pas été réécrit")
+	}
+}
+
+// `worktree add --relative-paths` réussit sur git ≥ 2.48 et inscrit
+// `extensions.relativeWorktrees` dans le .git/config du PROJET HÔTE. Tout git plus
+// ancien refuse alors la moindre commande dans ce dépôt — `git status` compris — avec
+// un message qui ne mentionne pas cogitex. Un poste récent casse le dépôt pour tous
+// les coéquipiers en git < 2.48, et c'est eux qui le découvrent.
+func TestInitNeverBrandsTheHostRepository(t *testing.T) {
+	bin := buildCtx(t)
+	root := initRepo(t, bin)
+
+	cfg, err := os.ReadFile(filepath.Join(root, ".git", "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if relWorktreesRe.Match(cfg) {
+		t.Fatalf("init a marqué le dépôt hôte :\n%s", cfg)
+	}
+}
+
+// Et les dépôts déjà marqués par une version précédente doivent guérir — sans passer
+// par git, puisque c'est précisément git qui refuse de tourner chez la victime.
+func TestInitHealsAnAlreadyBrandedRepository(t *testing.T) {
+	bin := buildCtx(t)
+	root := initRepo(t, bin)
+	cfgPath := filepath.Join(root, ".git", "config")
+
+	cfg, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, append(cfg, []byte("[extensions]\n\trelativeWorktrees = true\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// `doctor` sort en 1 quand il a quelque chose à signaler : c'est le cas ici.
+	out, err := tryRun(bin, root, "doctor")
+	if err == nil {
+		t.Fatalf("doctor devait échouer sur un dépôt marqué :\n%s", out)
+	}
+	if !strings.Contains(out, "relativeWorktrees") {
+		t.Fatalf("doctor doit nommer la marque :\n%s", out)
+	}
+
+	run(t, bin, root, "init", "--no-hooks")
+
+	cfg, err = os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if relWorktreesRe.Match(cfg) {
+		t.Fatalf("la marque devait être retirée :\n%s", cfg)
+	}
+	if !WorktreeReady(root) {
+		t.Fatal("le worktree doit être remonté après la réparation")
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -215,6 +216,62 @@ Everything here is written in English. Do not hand-edit: the identifier is the p
 and decisions and facts make other people's sessions stale.
 `
 
+// `extensions.relativeWorktrees` : la marque qu'un `cogitex init` d'une version
+// précédente a laissée dans le .git/config du projet hôte, via `worktree add
+// --relative-paths`. Tout git < 2.48 refuse ensuite TOUTE commande dans ce dépôt.
+var relWorktreesRe = regexp.MustCompile(`(?im)^[ \t]*relativeworktrees[ \t]*=.*\r?\n?`)
+
+// Le retrait se fait par une édition de texte, sans passer par git : la personne
+// réellement bloquée est justement celle dont le git refuse déjà tout ici.
+func unbrandRepo(root, wt string) {
+	gitdir := filepath.Join(root, ".git")
+	if st, err := os.Stat(gitdir); err != nil || !st.IsDir() {
+		return
+	}
+	cfg := filepath.Join(gitdir, "config")
+	b, err := os.ReadFile(cfg)
+	if err != nil || !relWorktreesRe.Match(b) {
+		return
+	}
+	// Un autre worktree du projet peut dépendre de cette extension. On ne retire que
+	// ce qu'on a posé : si le dépôt en porte un autre que le nôtre, on se contente de
+	// le dire.
+	//
+	// L'identification passe par le fichier `gitdir` et non par le nom du répertoire :
+	// git renomme `.cogitex` en `-cogitex` sous `.git/worktrees/`, et deviner cette
+	// transformation est exactement le genre de pari qui casse à la version suivante.
+	mine := "/" + filepath.Base(wt) + "/.git"
+	if entries, err := os.ReadDir(filepath.Join(gitdir, "worktrees")); err == nil {
+		for _, e := range entries {
+			g, err := os.ReadFile(filepath.Join(gitdir, "worktrees", e.Name(), "gitdir"))
+			if err != nil || !strings.HasSuffix(strings.TrimSpace(filepath.ToSlash(string(g))), mine) {
+				warn("cogitex : `extensions.relativeWorktrees` est actif et un autre worktree en dépend " +
+					"— à retirer à la main si un coéquipier a git < 2.48.")
+				return
+			}
+		}
+	}
+	if err := writeAtomic(cfg, relWorktreesRe.ReplaceAll(b, nil)); err != nil {
+		warn("cogitex : `extensions.relativeWorktrees` dans .git/config, à retirer à la main (%v).", err)
+		return
+	}
+	say("cogitex : `extensions.relativeWorktrees` retiré — il rendait toute commande git impossible " +
+		"pour un coéquipier en git < 2.48.")
+
+	// Le worktree existant porte des chemins relatifs : on le refait proprement. Jamais
+	// s'il contient du travail non commité.
+	if _, err := os.Stat(filepath.Join(wt, ".git")); err != nil {
+		return
+	}
+	if r := runGit([]string{"status", "--porcelain"}, gitOpts{Dir: wt, Timeout: 10 * time.Second}); r.OK && r.Out != "" {
+		warn("cogitex : `.cogitex` a des modifications non commitées — worktree laissé tel quel.")
+		return
+	}
+	_ = runGit([]string{"worktree", "remove", "--force", wt}, gitOpts{Dir: root, Timeout: 15 * time.Second})
+	_ = os.RemoveAll(wt)
+	git(root, "worktree", "prune")
+}
+
 func cmdInit() {
 	if IsShallow(root) {
 		die("clone superficiel : `git fetch --unshallow` d'abord (le calcul de delta a besoin des anciens objets)")
@@ -246,16 +303,23 @@ func cmdInit() {
 	}
 
 	wt := CogitexDir(root)
+	unbrandRepo(root, wt)
 	if _, err := os.Stat(filepath.Join(wt, ".git")); err == nil {
 		say("cogitex : worktree `.cogitex` déjà en place.")
 	} else if entries, err := os.ReadDir(wt); err == nil && len(entries) > 0 {
 		die("`.cogitex` existe et n'est pas un worktree — je ne supprime rien, à toi de voir")
 	} else {
-		add := runGit([]string{"worktree", "add", "--relative-paths", wt, Branch},
-			gitOpts{Dir: root, Timeout: 15 * time.Second})
-		if !add.OK {
-			add = runGit([]string{"worktree", "add", wt, Branch}, gitOpts{Dir: root, Timeout: 15 * time.Second})
-		}
+		// JAMAIS `--relative-paths`. Sur git ≥ 2.48 l'option réussit et inscrit
+		// `extensions.relativeWorktrees` dans le .git/config du PROJET HÔTE ; tout git
+		// plus ancien refuse alors la moindre commande dans ce dépôt — pas seulement
+		// les commandes de worktree — avec « unknown repository extension found ».
+		// Un coéquipier sous Ubuntu 24.04 (git 2.43) ne peut plus faire un `git status`,
+		// et rien dans le message ne mentionne cogitex.
+		//
+		// Ce qu'on perd : un worktree qui survit au déplacement du répertoire du projet.
+		// C'est réparable en une commande (`git worktree repair`). L'autre panne ne
+		// l'est pas, et elle frappe quelqu'un d'autre que celui qui l'a causée.
+		add := runGit([]string{"worktree", "add", wt, Branch}, gitOpts{Dir: root, Timeout: 15 * time.Second})
 		if !add.OK {
 			die("worktree add : %s", add.Err)
 		}
@@ -805,8 +869,9 @@ func cmdList() {
 }
 
 func cmdBrief() {
-	c := ReadCorpus(root)
-	h := BuildHead(root, c)
+	// `rebuild` et pas `BuildHead` : afficher le brief doit aussi le RÉÉCRIRE, sinon
+	// head.json avance sans lui et la session suivante reçoit l'ancien.
+	c, h := rebuild(root)
 	if h == nil {
 		die("branche `context` absente")
 	}
@@ -816,8 +881,7 @@ func cmdBrief() {
 // ---------------------------------------------------------------------- doctor
 
 func cmdDoctor() {
-	c := ReadCorpus(root)
-	h := BuildHead(root, c)
+	c, h := rebuild(root)
 	if h == nil {
 		die("branche `context` absente")
 	}
@@ -886,6 +950,13 @@ func cmdDoctor() {
 	}
 	if !WorktreeReady(root) {
 		problems = append(problems, "worktree `.cogitex` absent — `cogitex init`")
+	}
+	// La panne la plus coûteuse du lot, et celle qui frappe quelqu'un d'autre : un
+	// `cogitex init` d'une version précédente a pu marquer le dépôt, et tout git
+	// antérieur à 2.48 y refuse alors la moindre commande.
+	if b, err := os.ReadFile(filepath.Join(root, ".git", "config")); err == nil && relWorktreesRe.Match(b) {
+		problems = append(problems, "`extensions.relativeWorktrees` dans .git/config : un coéquipier "+
+			"en git < 2.48 ne peut plus lancer AUCUNE commande git dans ce dépôt — `cogitex init` le retire")
 	}
 
 	say("cogitex : brief %d/%d octets · %d décisions · %d faits · %d notes",

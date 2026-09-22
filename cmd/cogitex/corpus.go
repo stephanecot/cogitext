@@ -142,6 +142,27 @@ func BuildHead(root string, c Corpus) *Head {
 	return h
 }
 
+// Les trois fichiers dérivés — index, head et brief — se reconstruisent ENSEMBLE,
+// et c'est le seul endroit qui les écrit tous les trois.
+//
+// Les séparer a déjà coûté un bug silencieux : une commande qui avançait head.json
+// sans régénérer le brief laissait le court-circuit ci-dessous satisfait (tip
+// identique, brief présent), et la session suivante recevait l'ANCIEN brief sans que
+// rien ne le signale.
+func rebuild(root string) (Corpus, *Head) {
+	c := ReadCorpus(root)
+	h := BuildHead(root, c)
+	if h != nil {
+		_ = writeAtomic(BriefFile(root), []byte(RenderBrief(c, h, LoadConfig(root))))
+	}
+	return c, h
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
 // Reconstruit seulement si le tip a bougé : la reconstruction coûte ~10 ms, la
 // vérification en coûte 3.
 func EnsureHead(root string, force bool) *Head {
@@ -151,16 +172,15 @@ func EnsureHead(root string, force bool) *Head {
 	}
 	if !force {
 		if prev := ReadHead(root); prev != nil && prev.Tip == tip && prev.Local == LocalTip(root) {
-			if _, err := os.Stat(BriefFile(root)); err == nil {
+			// Les DEUX dérivés doivent être là. Ne tester que le brief rendait la
+			// disparition de l'index définitive : `find` et `list` répondaient « aucune
+			// entrée » pour toujours, puisque la reconstruction n'avait jamais lieu.
+			if fileExists(BriefFile(root)) && fileExists(IndexFile(root)) {
 				return prev
 			}
 		}
 	}
-	c := ReadCorpus(root)
-	h := BuildHead(root, c)
-	if h != nil {
-		_ = writeAtomic(BriefFile(root), []byte(RenderBrief(c, h, LoadConfig(root))))
-	}
+	_, h := rebuild(root)
 	return h
 }
 
