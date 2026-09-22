@@ -1,0 +1,11 @@
+id: decisions/git/2026-09-22-merge-the-context-branch-never-rebase
+title: "Merge the context branch, never rebase"
+type: technical
+status: active
+scope: domain
+domain: git
+date: 2026-09-22
+decision: "The context branch is merged on push conflicts, never rebased nor force-pushed."
+rationale: "Rebasing rewrites history and orphans gates recorded by other sessions; force-with-lease computed on a stale ref erases a teammate commit."
+refs:
+  - cmd/cogitex/main.go
