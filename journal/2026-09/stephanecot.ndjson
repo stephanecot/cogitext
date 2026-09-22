@@ -6,3 +6,4 @@
 {"actor":"stephanecot","id":"01M358N1KP3N7V1MN483EA08HB","kind":"decision","msg":"Agent dialects stay isolated","ref":"decisions/hooks/2026-09-22-agent-dialects-stay-isolated.yaml","ts":"2026-09-22T19:14:31Z"}
 {"actor":"stephanecot","id":"01M358N1P9ZMQSB9GV79YHAVAK","kind":"decision","msg":"Never use relative worktree paths","ref":"decisions/git/2026-09-22-never-use-relative-worktree-paths.yaml","ts":"2026-09-22T19:14:31Z"}
 {"actor":"stephanecot","id":"01M358N1S043RR96TK2XF8Z39G","kind":"decision","msg":"Merge the context branch, never rebase","ref":"decisions/git/2026-09-22-merge-the-context-branch-never-rebase.yaml","ts":"2026-09-22T19:14:31Z"}
+{"actor":"stephanecot","id":"01M358N1VSQBT1WSVMYA5F7549","kind":"note","msg":"SSH ControlPersist master held git pipes","ref":"notes/2026-09-22-ssh-controlpersist-master-held-git-pipes.md","ts":"2026-09-22T19:14:31Z"}
