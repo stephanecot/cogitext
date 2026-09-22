@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -436,12 +437,21 @@ func firstLine(s string) string {
 	return s
 }
 
+// Mémoïsé : un seul `add` l'appelait cinq fois, donc cinq sous-processus git pour
+// une valeur qui ne bouge pas de l'exécution.
+var (
+	gitUserOnce sync.Once
+	gitUserVal  string
+)
+
 func gitUser() string {
-	r := git(root, "config", "user.email")
-	if r.OK && r.Out != "" {
-		return strings.SplitN(r.Out, "@", 2)[0]
-	}
-	return "anonyme"
+	gitUserOnce.Do(func() {
+		gitUserVal = "anonyme"
+		if r := git(root, "config", "user.email"); r.OK && r.Out != "" {
+			gitUserVal = strings.SplitN(r.Out, "@", 2)[0]
+		}
+	})
+	return gitUserVal
 }
 
 // Un push non forcé ne réussit que si le tip distant est un ancêtre de ce qu'on
@@ -916,7 +926,7 @@ func cmdList() {
 func cmdBrief() {
 	// `rebuild` et pas `BuildHead` : afficher le brief doit aussi le RÉÉCRIRE, sinon
 	// head.json avance sans lui et la session suivante reçoit l'ancien.
-	c, h := rebuild(root)
+	c, h := rebuildNow(root)
 	if h == nil {
 		die("branche `context` absente")
 	}
@@ -926,7 +936,7 @@ func cmdBrief() {
 // ---------------------------------------------------------------------- doctor
 
 func cmdDoctor() {
-	c, h := rebuild(root)
+	c, h := rebuildNow(root)
 	if h == nil {
 		die("branche `context` absente")
 	}

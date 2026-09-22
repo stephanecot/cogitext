@@ -58,16 +58,52 @@ func ReadCorpus(root string) Corpus {
 			c.Entries = append(c.Entries, e)
 		}
 	}
+	c.Journal = countJournal(root, base)
+	return c
+}
+
+// Un shard de journal ne change qu'en s'allongeant, et on n'en veut qu'un nombre de
+// lignes. Les relire TOUS à chaque reconstruction faisait croître le coût avec
+// l'historique, indéfiniment, pour un chiffre qui n'apparaît que dans l'en-tête du
+// brief. Le mémo vit dans le cache, local à la machine.
+type journalShard struct {
+	Mod   int64 `json:"mod"`
+	Size  int64 `json:"size"`
+	Lines int   `json:"n"`
+}
+
+func countJournal(root, base string) int {
+	memo := map[string]journalShard{}
+	readJSON(filepath.Join(CacheDir(root), "journal.json"), &memo)
+	next := make(map[string]journalShard, len(memo))
+	total, changed := 0, false
 	for _, abs := range walkFiles(filepath.Join(base, "journal")) {
+		st, err := os.Stat(abs)
+		if err != nil {
+			continue
+		}
+		key := filepath.ToSlash(strings.TrimPrefix(abs, base+string(filepath.Separator)))
+		if m, ok := memo[key]; ok && m.Mod == st.ModTime().UnixNano() && m.Size == st.Size() {
+			next[key], total = m, total+m.Lines
+			continue
+		}
+		changed = true
+		n := 0
 		if b, err := os.ReadFile(abs); err == nil {
 			for _, l := range strings.Split(string(b), "\n") {
 				if strings.TrimSpace(l) != "" {
-					c.Journal++
+					n++
 				}
 			}
 		}
+		next[key] = journalShard{Mod: st.ModTime().UnixNano(), Size: st.Size(), Lines: n}
+		total += n
 	}
-	return c
+	if changed || len(next) != len(memo) {
+		_ = os.MkdirAll(CacheDir(root), 0o755)
+		_ = writeJSONAtomic(filepath.Join(CacheDir(root), "journal.json"), next)
+	}
+	return total
 }
 
 func (c Corpus) ActiveDecisions() []Entry {
@@ -101,8 +137,10 @@ type IndexRow struct {
 	Date   string   `json:"date"`
 }
 
-func BuildHead(root string, c Corpus) *Head {
-	tip := WorldTip(root)
+// Les tips sont passés, jamais recalculés : l'appelant les connaît déjà, et les
+// redemander ici coûtait deux sous-processus git de plus à chaque reconstruction,
+// pour une réponse identique à la milliseconde près.
+func BuildHead(root string, c Corpus, tip, local string) *Head {
 	if tip == "" {
 		return nil
 	}
@@ -114,7 +152,7 @@ func BuildHead(root string, c Corpus) *Head {
 		}
 	}
 	h := &Head{
-		Tip: tip, Local: LocalTip(root),
+		Tip: tip, Local: local,
 		Gate: GateOf(root, tip), GateSeq: GateSeqOf(root, tip),
 		BuiltAt: now.UnixMilli(),
 		N: Counts{Decisions: len(c.ActiveDecisions()), Facts: len(c.LiveFacts(now)),
@@ -149,14 +187,16 @@ func BuildHead(root string, c Corpus) *Head {
 // sans régénérer le brief laissait le court-circuit ci-dessous satisfait (tip
 // identique, brief présent), et la session suivante recevait l'ANCIEN brief sans que
 // rien ne le signale.
-func rebuild(root string) (Corpus, *Head) {
+func rebuild(root, tip, local string) (Corpus, *Head) {
 	c := ReadCorpus(root)
-	h := BuildHead(root, c)
+	h := BuildHead(root, c, tip, local)
 	if h != nil {
 		_ = writeAtomic(BriefFile(root), []byte(RenderBrief(c, h, LoadConfig(root))))
 	}
 	return c, h
 }
+
+func rebuildNow(root string) (Corpus, *Head) { return rebuild(root, WorldTip(root), LocalTip(root)) }
 
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
@@ -170,8 +210,9 @@ func EnsureHead(root string, force bool) *Head {
 	if tip == "" {
 		return nil
 	}
+	local := LocalTip(root)
 	if !force {
-		if prev := ReadHead(root); prev != nil && prev.Tip == tip && prev.Local == LocalTip(root) {
+		if prev := ReadHead(root); prev != nil && prev.Tip == tip && prev.Local == local {
 			// Les DEUX dérivés doivent être là. Ne tester que le brief rendait la
 			// disparition de l'index définitive : `find` et `list` répondaient « aucune
 			// entrée » pour toujours, puisque la reconstruction n'avait jamais lieu.
@@ -180,7 +221,7 @@ func EnsureHead(root string, force bool) *Head {
 			}
 		}
 	}
-	_, h := rebuild(root)
+	_, h := rebuild(root, tip, local)
 	return h
 }
 

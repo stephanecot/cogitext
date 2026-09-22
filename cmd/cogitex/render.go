@@ -11,6 +11,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -173,6 +175,15 @@ func DescribeChanges(root, from, to string, cfg Config, limit int) []Change {
 	if from == "" || to == "" || from == to {
 		return nil
 	}
+	// Le couple de gates est immuable, donc le résultat aussi : on ne le calcule
+	// qu'une fois. Sans ce mémo, une session périmée repayait un `git diff` et jusqu'à
+	// huit `git show` à CHAQUE prompt — et sous Copilot, où la session reste périmée à
+	// dessein jusqu'au premier refus, la facture se répétait tour après tour.
+	memo := DeltaFile(root, from, to, limit, cfg.FactsBlock)
+	var cached []Change
+	if readJSON(memo, &cached) && len(cached) > 0 {
+		return cached
+	}
 	paths := []string{"decisions", "facts"}
 	if !cfg.FactsBlock {
 		paths = []string{"decisions"}
@@ -212,6 +223,12 @@ func DescribeChanges(root, from, to string, cfg Config, limit int) []Change {
 		if out[i].Rule == "" {
 			out[i].Rule = e.Str("body")
 		}
+	}
+	// Un échec git ne se mémoïse pas : il serait figé pour toujours sur un couple de
+	// gates qui, lui, ne bougera plus.
+	if len(out) > 0 {
+		_ = os.MkdirAll(filepath.Dir(memo), 0o755)
+		_ = writeJSONAtomic(memo, out)
 	}
 	return out
 }

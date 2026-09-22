@@ -713,3 +713,46 @@ func TestSupersedesRefusesAnUnknownTarget(t *testing.T) {
 		t.Fatalf("message peu clair :\n%s", out)
 	}
 }
+
+// ------------------------------------------------------------------ le cache
+
+// Le couple de gates est immuable : le delta ne doit être calculé qu'une fois. On le
+// vérifie en falsifiant le mémo — si la seconde lecture le rend, c'est qu'elle ne
+// repasse pas par git.
+func TestDeltaIsMemoizedOnItsGatePair(t *testing.T) {
+	root := t.TempDir()
+	from, to := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	cfg := LoadConfig(root)
+
+	memo := DeltaFile(root, from, to, cfg.DeltaMaxEntries, cfg.FactsBlock)
+	if err := os.MkdirAll(filepath.Dir(memo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(memo, []Change{{ID: "decisions/api/memo", Title: "from the memo"}}); err != nil {
+		t.Fatal(err)
+	}
+	got := DescribeChanges(root, from, to, cfg, cfg.DeltaMaxEntries)
+	if len(got) != 1 || got[0].Title != "from the memo" {
+		t.Fatalf("le mémo doit court-circuiter git : %#v", got)
+	}
+}
+
+// Un shard de journal ne change qu'en s'allongeant. Le mémo doit suivre, sans jamais
+// se tromper de compte — c'est l'en-tête du brief qui l'affiche.
+func TestJournalCountFollowsTheJournal(t *testing.T) {
+	bin := buildCtx(t)
+	root := initRepo(t, bin)
+	for i, payload := range []string{
+		`{"title":"One","slug":"one","type":"convention","domain":"api","scope":"global","decision":"The first rule.","rationale":"x"}`,
+		`{"title":"Two","slug":"two","type":"convention","domain":"api","scope":"global","decision":"The second rule.","rationale":"y"}`,
+	} {
+		addEntry(t, bin, root, "decision", payload)
+		want := "· " + itoa(i+1) + " journal"
+		if out := run(t, bin, root, "brief"); !strings.Contains(out, want) {
+			t.Fatalf("après %d entrée(s), l'en-tête doit dire %q :\n%s", i+1, want, strings.SplitN(out, "\n", 2)[0])
+		}
+	}
+	if !fileExists(filepath.Join(root, ".claude", "cache", "cogitex", "journal.json")) {
+		t.Fatal("le mémo du journal n'a pas été écrit")
+	}
+}

@@ -81,16 +81,23 @@ func TraceDone(root, event string, t0 time.Time, fields map[string]any) {
 // vingt-neuf suivantes ne font rien. Touché après, les trente lanceraient chacune le
 // leur, soit trente poignées de main SSH simultanées.
 func MaybeRefresh(root string, cfg Config) bool {
-	if IsCI() || IsShallow(root) || !HasBranch(root) {
+	if IsCI() {
 		Trace(root, "refresh", map[string]any{"spawned": false, "why": "hors périmètre"})
 		return false
 	}
+	// Le throttle d'abord : c'est un `stat`, et il tranche dans le cas dominant. Les
+	// deux vérifications git qui suivent coûtent un sous-processus chacune, et elles
+	// étaient payées à CHAQUE prompt pour, la plupart du temps, ne rien faire.
 	age := time.Duration(1<<62 - 1)
 	if st, err := os.Stat(StampFile(root)); err == nil {
 		age = time.Since(st.ModTime())
 	}
 	if age <= time.Duration(cfg.RefreshThrottleMs)*time.Millisecond {
 		Trace(root, "refresh", map[string]any{"spawned": false, "why": "throttle", "ageMs": age.Milliseconds()})
+		return false
+	}
+	if IsShallow(root) || !HasBranch(root) {
+		Trace(root, "refresh", map[string]any{"spawned": false, "why": "hors périmètre"})
 		return false
 	}
 	_ = os.MkdirAll(CacheDir(root), 0o755)

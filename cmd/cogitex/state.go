@@ -5,6 +5,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,6 +22,18 @@ func IndexFile(root string) string    { return filepath.Join(CacheDir(root), "in
 func StampFile(root string) string    { return filepath.Join(CacheDir(root), "fetch.stamp") }
 func DisabledFile(root string) string { return filepath.Join(CacheDir(root), "DISABLED") }
 func SessionsDir(root string) string  { return filepath.Join(CacheDir(root), "sessions") }
+func DeltaDir(root string) string     { return filepath.Join(CacheDir(root), "delta") }
+
+// Un delta est indexé par le couple de gates, qui est immuable : ce qui a changé
+// entre deux SHAs ne changera plus. Les SHAs entiers, pas abrégés — un préfixe de
+// sept caractères suffit à l'œil humain, pas à une clé de cache.
+func DeltaFile(root, from, to string, limit int, facts bool) string {
+	scope := "d"
+	if facts {
+		scope = "df"
+	}
+	return filepath.Join(DeltaDir(root), fmt.Sprintf("%s_%s_%d%s.json", from, to, limit, scope))
+}
 
 var sidSafe = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 
@@ -251,16 +264,20 @@ func InheritGate(root, fallback string) string {
 	return fallback
 }
 
+// Le ménage du cache, une fois par session. Les deux répertoires grossissent sans
+// borne autrement : un fichier par session, un fichier par couple de gates.
 func GCSessions(root string) {
-	entries, err := os.ReadDir(SessionsDir(root))
-	if err != nil {
-		return
-	}
 	cutoff := time.Now().Add(-7 * 24 * time.Hour)
-	for _, e := range entries {
-		p := filepath.Join(SessionsDir(root), e.Name())
-		if st, err := os.Stat(p); err == nil && st.ModTime().Before(cutoff) {
-			_ = os.Remove(p)
+	for _, dir := range []string{SessionsDir(root), DeltaDir(root)} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			p := filepath.Join(dir, e.Name())
+			if st, err := os.Stat(p); err == nil && st.ModTime().Before(cutoff) {
+				_ = os.Remove(p)
+			}
 		}
 	}
 }
