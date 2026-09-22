@@ -1,0 +1,12 @@
+id: decisions/build/2026-09-22-static-binary-stdlib-only
+title: "Static binary, stdlib only"
+type: technical
+status: active
+scope: domain
+domain: build
+date: 2026-09-22
+decision: "The binary stays static: Go stdlib only, CGO_ENABLED=0, git as the sole runtime dependency."
+rationale: "It must drop into any project (Java, Python, .NET) without imposing a runtime."
+refs:
+  - README.md
+  - build.sh
