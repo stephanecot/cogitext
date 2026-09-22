@@ -1,0 +1,15 @@
+id: decisions/hooks/2026-09-22-portable-hook-command
+title: "Portable hook command"
+type: technical
+status: active
+scope: domain
+domain: hooks
+date: 2026-09-22
+decision: "Claude hooks run git in exec form with an alias to the launcher, never an OS-specific binary path."
+rationale: "Shell-form hooks fall back to PowerShell on Windows without Git Bash, which cannot run a .sh; git exists everywhere and runs ! aliases with its own sh."
+affects:
+  - "hooks/*.json"
+  - cmd/cogitex/main.go
+refs:
+  - cmd/cogitex/main.go
+  - hooks/claude-hooks.json

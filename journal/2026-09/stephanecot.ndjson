@@ -2,3 +2,4 @@
 {"actor":"stephanecot","id":"01M358N19GZGE2R3W05XCWBPHM","kind":"decision","msg":"Hooks fail open","ref":"decisions/hooks/2026-09-22-hooks-fail-open.yaml","ts":"2026-09-22T19:14:30Z"}
 {"actor":"stephanecot","id":"01M358N1C38KK7RGMMKNFCEDM3","kind":"decision","msg":"Release builds only","ref":"decisions/build/2026-09-22-release-builds-only.yaml","ts":"2026-09-22T19:14:30Z"}
 {"actor":"stephanecot","id":"01M358N1ENVJ2FT9TKM26W0RDZ","kind":"decision","msg":"Static binary, stdlib only","ref":"decisions/build/2026-09-22-static-binary-stdlib-only.yaml","ts":"2026-09-22T19:14:30Z"}
+{"actor":"stephanecot","id":"01M358N1H4N01Y9987XBT46251","kind":"decision","msg":"Portable hook command","ref":"decisions/hooks/2026-09-22-portable-hook-command.yaml","ts":"2026-09-22T19:14:31Z"}
