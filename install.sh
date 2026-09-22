@@ -74,7 +74,7 @@ add_line() {
 }
 add_line "$TARGET/.gitignore" "/.cogitex/" "# Worktree du contexte partagé, monté par \`cogitex init\`."
 add_line "$TARGET/.gitignore" "/.claude/cache/" "# Cache des sessions des agents."
-add_line "$TARGET/.gitignore" "/.claude/settings.local.json" "# Réglages écrits par \`cogitex init\` : ils désignent un binaire par OS."
+add_line "$TARGET/.gitignore" "/.claude/settings.local.json" "# Réglages personnels de Claude Code : les hooks cogitex vont dans settings.json, commité."
 add_line "$TARGET/.gitattributes" ".claude/cogitex/bin/** binary" "# Les binaires cogitex ne doivent subir aucune conversion de fins de ligne."
 add_line "$TARGET/.gitattributes" ".claude/cogitex/cogitex.sh text eol=lf" "# Les lanceurs gardent les fins de ligne de leur plateforme."
 add_line "$TARGET/.gitattributes" ".claude/cogitex/cogitex.cmd text eol=crlf" ""
@@ -90,11 +90,10 @@ Reste à faire, dans le projet :
   .claude\cogitex\cogitex.cmd init       # Windows
 
 `init` crée ou rejoint la branche de contexte, monte le worktree `.cogitex`, et
-câble les hooks Claude Code dans `.claude/settings.local.json` — local et
-gitignoré, parce qu'un chemin de binaire dépend de l'OS.
+fusionne les hooks Claude Code dans `.claude/settings.json`.
 
-Les hooks GitHub Copilot, eux, sont déjà en place : `.github/hooks/cogitex.json`
-et `.github/instructions/cogitex.instructions.md` ne dépendent d'aucun chemin
-absolu. **Commitez-les** — c'est ce qui les donne à toute l'équipe, et à l'agent
-cloud, qui ne lit que `.github/hooks/`.
+Les hooks des deux agents sont identiques sous Windows, macOS et Linux :
+**commitez `.claude/settings.json`, `.github/hooks/cogitex.json` et
+`.github/instructions/cogitex.instructions.md`** — c'est ce qui les donne à toute
+l'équipe, et à l'agent cloud de Copilot, qui ne lit que `.github/hooks/`.
 NEXT

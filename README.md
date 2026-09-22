@@ -68,18 +68,38 @@ Then, inside the project:
 .claude\cogitex\cogitex.cmd init       # Windows
 ```
 
-`init` creates or joins the branch, mounts the `.cogitex` worktree, and writes
-`.claude/settings.local.json` — **local and gitignored**, because a
-`settings.json` cannot point at a different binary path per OS. That is the
-accepted price of committed binaries: one command after cloning, but no
-installation and no toolchain.
+`init` creates or joins the branch, mounts the `.cogitex` worktree, and merges
+the Claude Code hooks into `.claude/settings.json` — keeping everything else that
+file holds, and removing the per-machine hooks an older `init` wrote into
+`settings.local.json`.
 
-The Copilot hooks, on the other hand, arrive already wired in
-`.github/hooks/cogitex.json`: they depend on no absolute path, so they are meant
-to be committed. **Commit them** — that is what gives them to the team, and to
+Both agents' hooks are **the same on Windows, macOS and Linux**, so both are
+meant to be committed. **Commit `.claude/settings.json` and
+`.github/hooks/cogitex.json`** — that is what gives them to the team, and to
 Copilot's cloud agent, which reads nothing but `.github/hooks/`.
 
-Everyone who clones the project runs `init` once.
+Everyone who clones the project still runs `init` once, to mount the worktree;
+the hooks are already there, and stay silent until the branch is.
+
+### How one hook command works on three systems
+
+A Claude Code hook either goes through a shell — `sh` on macOS and Linux, Git
+Bash on Windows, **PowerShell when Git Bash is missing** — or, when it has
+`args`, spawns its executable directly. The binary's name differs per OS, and
+PowerShell cannot run a `.sh`: no single shell command covers the three.
+
+So the hooks run **`git`**, in exec form — the one executable that exists under
+that name everywhere, and that cogitex needs anyway — with an alias:
+
+```json
+{ "command": "git",
+  "args": ["-c", "alias.cogitex=!.claude/cogitex/cogitex.sh", "cogitex", "hook-guard", "--claude", "${CLAUDE_PROJECT_DIR}"] }
+```
+
+git runs a `!` alias with the `sh` it ships — Git for Windows included — from
+the repository's top level, and the launcher picks the binary for the platform.
+stdin, stdout and the exit code pass through untouched. Copilot needs no trick:
+its hook format has a `bash` and a `powershell` field.
 
 ## Commands
 
@@ -200,7 +220,7 @@ The core — corpus, branch, worktree, rendering, search — depends on nothing 
 | `cmd/cogitex/agent.go` | reads both payload dialects, writes both response dialects |
 | `hooks/claude-hooks.json` | the three Claude Code events, plugin side |
 | `hooks/copilot-hooks.json` | the same ones, under Copilot's names |
-| `.claude/settings.local.json` | a project's Claude Code hooks, written by `init` |
+| `.claude/settings.json` | a project's Claude Code hooks, merged by `init`, committed |
 | `.github/hooks/cogitex.json` | a project's Copilot hooks, committed |
 | `.claude/cache/cogitex/` | a session's pinning state |
 

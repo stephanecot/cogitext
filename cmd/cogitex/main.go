@@ -286,6 +286,10 @@ func unbrandRepo(root, wt string) {
 }
 
 func cmdInit() {
+	// EN PREMIER, avant le moindre appel à git : sur un dépôt marqué, git refuse
+	// toute commande, et le premier `git` venu ferait mourir `init` avant qu'il
+	// n'atteigne la seule réparation qui ne passe pas par lui.
+	unbrandRepo(root, CogitexDir(root))
 	if IsShallow(root) {
 		die("clone superficiel : `git fetch --unshallow` d'abord (le calcul de delta a besoin des anciens objets)")
 	}
@@ -316,7 +320,6 @@ func cmdInit() {
 	}
 
 	wt := CogitexDir(root)
-	unbrandRepo(root, wt)
 	if _, err := os.Stat(filepath.Join(wt, ".git")); err == nil {
 		say("cogitex : worktree `.cogitex` déjà en place.")
 	} else if entries, err := os.ReadDir(wt); err == nil && len(entries) > 0 {
@@ -396,34 +399,150 @@ func ensureIgnored() {
 	}
 }
 
-// settings.json ne peut pas désigner un chemin de binaire différent selon l'OS : il
-// est donc généré localement, pour la plateforme courante, et gitignoré. C'est la
-// contrepartie assumée des binaires commités.
+// L'alias par lequel un hook Claude Code atteint le lanceur. C'est tout le secret
+// d'un câblage identique sous Windows, macOS et Linux, donc commitable :
+//
+//   - forme exec (`args`) : Claude Code lance l'exécutable directement, sans shell.
+//     En forme shell, un Windows sans Git Bash passe par PowerShell, qui ne sait pas
+//     lancer un `.sh` — et le garde tomberait en silence ;
+//   - l'exécutable est `git` : le seul qui existe sous ce nom sur les trois systèmes,
+//     et cogitex en dépend déjà. Un nom de binaire par OS, lui, ne tient pas dans un
+//     fichier partagé ;
+//   - un alias `!` est exécuté par le `sh` que git embarque — y compris Git pour
+//     Windows — depuis la racine du dépôt. Le lanceur, qui choisit le binaire de la
+//     plateforme, y est donc toujours à `.claude/cogitex/cogitex.sh`.
+//
+// stdin, stdout et le code de sortie traversent l'alias tels quels, et les
+// arguments lui sont ajoutés. La racine suit en dernier : en forme exec, Claude
+// Code substitue `${CLAUDE_PROJECT_DIR}` comme UN argument, sans guillemets à
+// gérer — un chemin Windows avec espaces arrive entier.
+const projectHookAlias = "alias.cogitex=!.claude/cogitex/cogitex.sh"
+
+func claudeHook(entry string, timeout int) map[string]any {
+	return map[string]any{"type": "command", "command": "git",
+		"args":    []any{"-c", projectHookAlias, "cogitex", entry, "--claude", "${CLAUDE_PROJECT_DIR}"},
+		"timeout": timeout}
+}
+
+// Les hooks Claude Code du projet vont dans `.claude/settings.json`, COMMITÉ : la
+// commande ne dépend plus de l'OS, donc un clone reçoit le garde sans rien lancer.
+//
+// Fusion, jamais écrasement : ce fichier appartient au projet et porte d'autres
+// réglages. Seules nos propres entrées sont remplacées, ce qui rend `init`
+// rejouable à volonté.
 func writeSettings() {
-	self, err := os.Executable()
+	ours := map[string]map[string]any{
+		"SessionStart": {"matcher": "startup|resume|clear", "hooks": []any{claudeHook("hook-start", 10)}},
+		"UserPromptSubmit": {"hooks": []any{claudeHook("hook-prompt", 5)}},
+		"PreToolUse":       {"matcher": "Edit|Write|MultiEdit", "hooks": []any{claudeHook("hook-guard", 5)}},
+	}
+	p := filepath.Join(root, ".claude", "settings.json")
+	changed, err := editSettings(p, func(hooks map[string]any) {
+		for event, group := range ours {
+			list, _ := hooks[event].([]any)
+			hooks[event] = append(withoutCogitex(list), group)
+		}
+	})
 	if err != nil {
+		warn("cogitex : .claude/settings.json illisible (%v) — hooks non câblés, rien n'est écrasé.", err)
 		return
 	}
-	if rel, err := filepath.Rel(root, self); err == nil && !strings.HasPrefix(rel, "..") {
-		self = "${CLAUDE_PROJECT_DIR}/" + filepath.ToSlash(rel)
+	if changed {
+		say("cogitex : hooks câblés dans .claude/settings.json — identiques sous Windows, macOS et Linux, à commiter.")
+	} else {
+		say("cogitex : hooks déjà câblés dans .claude/settings.json.")
 	}
-	hook := func(cmd string, timeout int) map[string]any {
-		return map[string]any{"type": "command",
-			"command": fmt.Sprintf("%q %s \"${CLAUDE_PROJECT_DIR}\"", self, cmd), "timeout": timeout}
+
+	// Une version précédente les écrivait dans settings.local.json, avec un chemin de
+	// binaire propre à la machine. Laissés là, ils tireraient EN PLUS des nouveaux :
+	// brief injecté deux fois, et deux refus comptés pour une seule écriture.
+	local := filepath.Join(root, ".claude", "settings.local.json")
+	if changed, err := editSettings(local, func(hooks map[string]any) {
+		for event, v := range hooks {
+			list, _ := v.([]any)
+			if rest := withoutCogitex(list); len(rest) > 0 {
+				hooks[event] = rest
+			} else {
+				delete(hooks, event)
+			}
+		}
+	}); err == nil && changed {
+		say("cogitex : anciens hooks retirés de .claude/settings.local.json.")
 	}
-	settings := map[string]any{"hooks": map[string]any{
-		"SessionStart": []any{map[string]any{"matcher": "startup|resume|clear",
-			"hooks": []any{hook("hook-start", 10)}}},
-		"UserPromptSubmit": []any{map[string]any{"hooks": []any{hook("hook-prompt", 5)}}},
-		"PreToolUse": []any{map[string]any{"matcher": "Edit|Write|MultiEdit",
-			"hooks": []any{hook("hook-guard", 5)}}},
-	}}
-	p := filepath.Join(root, ".claude", "settings.local.json")
-	_ = os.MkdirAll(filepath.Dir(p), 0o755)
-	b, _ := json.MarshalIndent(settings, "", "  ")
-	if err := os.WriteFile(p, append(b, '\n'), 0o644); err == nil {
-		say("cogitex : hooks câblés dans .claude/settings.local.json (%s/%s).", runtime.GOOS, runtime.GOARCH)
+}
+
+// Lit un fichier de réglages, applique `mutate` à sa section `hooks`, et ne
+// réécrit que si quelque chose a changé. Un fichier absent vaut `{}` ; un fichier
+// illisible est une erreur, jamais une page blanche à réécrire.
+func editSettings(p string, mutate func(hooks map[string]any)) (bool, error) {
+	settings := map[string]any{}
+	before, err := os.ReadFile(p)
+	if err == nil {
+		if err := json.Unmarshal(before, &settings); err != nil {
+			return false, err
+		}
+	} else if !os.IsNotExist(err) {
+		return false, err
 	}
+	hooks, _ := settings["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+	mutate(hooks)
+	if len(hooks) > 0 {
+		settings["hooks"] = hooks
+	} else {
+		delete(settings, "hooks")
+	}
+
+	if before == nil && len(settings) == 0 {
+		return false, nil // rien à écrire, et aucun fichier vide à créer
+	}
+	var old map[string]any
+	_ = json.Unmarshal(before, &old)
+	a, _ := json.Marshal(old)
+	b, _ := json.Marshal(settings)
+	if string(a) == string(b) {
+		return false, nil
+	}
+	if len(settings) == 0 {
+		// Un réglage local qui ne portait QUE nos hooks : le vider, c'est le supprimer.
+		return true, os.Remove(p)
+	}
+	out, _ := json.MarshalIndent(settings, "", "  ")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return false, err
+	}
+	return true, os.WriteFile(p, append(out, '\n'), 0o644)
+}
+
+// Un groupe de hooks, privé des entrées de cogitex. On les reconnaît au même signe
+// que `projectWiresHooks` : le nom du binaire ET un point d'entrée de hook, pour
+// ne jamais retirer le hook de quelqu'un d'autre qui mentionnerait cogitex.
+func withoutCogitex(groups []any) []any {
+	var out []any
+	for _, g := range groups {
+		group, ok := g.(map[string]any)
+		if !ok {
+			out = append(out, g)
+			continue
+		}
+		list, _ := group["hooks"].([]any)
+		var keep []any
+		for _, h := range list {
+			b, _ := json.Marshal(h)
+			if s := string(b); strings.Contains(s, "cogitex") && strings.Contains(s, "hook-") {
+				continue
+			}
+			keep = append(keep, h)
+		}
+		if len(keep) == 0 {
+			continue
+		}
+		group["hooks"] = keep
+		out = append(out, group)
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------- écriture
@@ -1233,8 +1352,22 @@ func cmdBrief() {
 // ---------------------------------------------------------------------- doctor
 
 func cmdDoctor() {
+	// La marque se lit AVANT tout appel à git : chez la victime, git refuse de tourner,
+	// `rebuildNow` ne trouve aucune branche, et doctor accusait une branche absente au
+	// lieu de nommer la vraie cause.
+	branded := false
+	if b, err := os.ReadFile(filepath.Join(root, ".git", "config")); err == nil && relWorktreesRe.Match(b) {
+		branded = true
+	}
+	const brandMsg = "`extensions.relativeWorktrees` dans .git/config : un coéquipier " +
+		"en git < 2.48 ne peut plus lancer AUCUNE commande git dans ce dépôt — `cogitex init` le retire"
+
 	c, h := rebuildNow(root)
 	if h == nil {
+		if branded {
+			warn("  ✗ %s", brandMsg)
+			os.Exit(1)
+		}
 		die("branche `context` absente")
 	}
 	cfg := LoadConfig(root)
@@ -1316,9 +1449,8 @@ func cmdDoctor() {
 	// La panne la plus coûteuse du lot, et celle qui frappe quelqu'un d'autre : un
 	// `cogitex init` d'une version précédente a pu marquer le dépôt, et tout git
 	// antérieur à 2.48 y refuse alors la moindre commande.
-	if b, err := os.ReadFile(filepath.Join(root, ".git", "config")); err == nil && relWorktreesRe.Match(b) {
-		problems = append(problems, "`extensions.relativeWorktrees` dans .git/config : un coéquipier "+
-			"en git < 2.48 ne peut plus lancer AUCUNE commande git dans ce dépôt — `cogitex init` le retire")
+	if branded {
+		problems = append(problems, brandMsg)
 	}
 
 	if h.N.Drafts > 0 {

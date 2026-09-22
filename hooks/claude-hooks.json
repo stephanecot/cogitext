@@ -7,7 +7,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/dist/.claude/cogitex/cogitex.sh\" hook-start --claude \"${CLAUDE_PROJECT_DIR}\"",
+            "command": "git",
+            "args": ["-c", "alias.cogitex=!\"$CLAUDE_PLUGIN_ROOT/dist/.claude/cogitex/cogitex.sh\"", "cogitex", "hook-start", "--claude", "${CLAUDE_PROJECT_DIR}"],
             "timeout": 10
           }
         ]
@@ -18,7 +19,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/dist/.claude/cogitex/cogitex.sh\" hook-prompt --claude \"${CLAUDE_PROJECT_DIR}\"",
+            "command": "git",
+            "args": ["-c", "alias.cogitex=!\"$CLAUDE_PLUGIN_ROOT/dist/.claude/cogitex/cogitex.sh\"", "cogitex", "hook-prompt", "--claude", "${CLAUDE_PROJECT_DIR}"],
             "timeout": 5
           }
         ]
@@ -30,7 +32,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/dist/.claude/cogitex/cogitex.sh\" hook-guard --claude \"${CLAUDE_PROJECT_DIR}\"",
+            "command": "git",
+            "args": ["-c", "alias.cogitex=!\"$CLAUDE_PLUGIN_ROOT/dist/.claude/cogitex/cogitex.sh\"", "cogitex", "hook-guard", "--claude", "${CLAUDE_PROJECT_DIR}"],
             "timeout": 5
           }
         ]

@@ -414,10 +414,16 @@ func Parse(text string) Entry {
 // sont exigées, ce qui écarte « de » dans un nom.
 var frWords = regexp.MustCompile(`(?i)\b(le|la|les|une|des|du|et|ou|est|sont|dans|pour|avec|sans|pas|ne|que|qui|sur|aux|cette|nous|vous|leur|toujours|jamais|doit|doivent|être|avoir|faire|chaque|ainsi|donc|mais|alors)\b`)
 
+// Ce qui est CITÉ n'est pas de la prose : un libellé d'interface, un message
+// d'erreur métier ou un identifiant recopié tel quel (`"Le dossier est clos"`) est
+// en français parce que le produit l'est. Le refuser forcerait à le traduire, donc
+// à le rendre introuvable par celui qui cherche la chaîne exacte.
+var quoted = regexp.MustCompile("`[^`]*`|\"[^\"]*\"|«[^»]*»|“[^”]*”")
+
 func LooksFrench(text string) []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, m := range frWords.FindAllString(strings.ToLower(text), -1) {
+	for _, m := range frWords.FindAllString(strings.ToLower(quoted.ReplaceAllString(text, " ")), -1) {
 		if !seen[m] {
 			seen[m] = true
 			out = append(out, m)

@@ -33,8 +33,15 @@ behind the sources, and the README says so.
 When a release is actually decided:
 
 ```sh
-./build.sh
+go vet ./... && go test ./... && ./build.sh
 ```
+
+**Never build a release on a red test suite.** The binaries in `dist/` are what
+every host project runs; a release cut over a failing test ships the failure to
+all of them, and the next release is the only way to take it back. Some tests
+depend on the local git version (the `relativeWorktrees` ones do), so a suite
+that passed last month can turn red after a git upgrade — rerun it, do not trust
+an old green.
 
 It crosses `CGO_ENABLED=0` with five GOOS/GOARCH pairs (darwin arm64 and amd64,
 linux amd64 and arm64, windows amd64). `CGO_ENABLED=0` is not decoration: it is

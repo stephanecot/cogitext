@@ -206,6 +206,21 @@ func runsFromPlugin(root string) bool {
 	if err != nil {
 		return false
 	}
-	rel, err := filepath.Rel(root, self)
-	return err == nil && strings.HasPrefix(rel, "..")
+	return !within(root, self)
+}
+
+// Vrai quand p vit sous root, liens symboliques résolus des deux côtés. Sans cette
+// résolution, un projet atteint par un lien (`/var` → `/private/var` sous macOS, un
+// home déplacé) se croit servi par un plugin : l'alias git lance le lanceur depuis
+// le chemin RÉEL du dépôt, la racine arrive sous le chemin du lien, et le hook du
+// projet s'efface en silence devant un plugin qui n'existe pas.
+func within(root, p string) bool {
+	if r, err := filepath.EvalSymlinks(root); err == nil {
+		root = r
+	}
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		p = r
+	}
+	rel, err := filepath.Rel(root, p)
+	return err == nil && !strings.HasPrefix(rel, "..")
 }

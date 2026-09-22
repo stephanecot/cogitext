@@ -71,7 +71,7 @@ $ignore = Join-Path $Target ".gitignore"
 $attrs = Join-Path $Target ".gitattributes"
 Add-Line $ignore "/.cogitex/" "# Worktree du contexte partage, monte par ``cogitex init``."
 Add-Line $ignore "/.claude/cache/" "# Cache des sessions des agents."
-Add-Line $ignore "/.claude/settings.local.json" "# Reglages ecrits par ``cogitex init`` : ils designent un binaire par OS."
+Add-Line $ignore "/.claude/settings.local.json" "# Reglages personnels de Claude Code : les hooks cogitex vont dans settings.json, commite."
 Add-Line $attrs ".claude/cogitex/bin/** binary" "# Les binaires cogitex ne doivent subir aucune conversion de fins de ligne."
 Add-Line $attrs ".claude/cogitex/cogitex.sh text eol=lf" "# Les lanceurs gardent les fins de ligne de leur plateforme."
 Add-Line $attrs ".claude/cogitex/cogitex.cmd text eol=crlf" ""
@@ -87,11 +87,10 @@ Reste a faire, dans le projet :
   .claude/cogitex/cogitex.sh init        # macOS, Linux, Git Bash
 
 ``init`` cree ou rejoint la branche de contexte, monte le worktree ``.cogitex``,
-et cable les hooks Claude Code dans ``.claude/settings.local.json`` — local et
-gitignore, parce qu'un chemin de binaire depend de l'OS.
+et fusionne les hooks Claude Code dans ``.claude/settings.json``.
 
-Les hooks GitHub Copilot sont deja en place : ``.github/hooks/cogitex.json`` et
-``.github/instructions/cogitex.instructions.md`` ne dependent d'aucun chemin
-absolu. Commitez-les — c'est ce qui les donne a toute l'equipe, et a l'agent
-cloud, qui ne lit que ``.github/hooks/``.
+Les hooks des deux agents sont identiques sous Windows, macOS et Linux :
+commitez ``.claude/settings.json``, ``.github/hooks/cogitex.json`` et
+``.github/instructions/cogitex.instructions.md`` — c'est ce qui les donne a toute
+l'equipe, et a l'agent cloud de Copilot, qui ne lit que ``.github/hooks/``.
 "@

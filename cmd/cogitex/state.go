@@ -134,7 +134,6 @@ func GateSeqOf(root, tip string) int {
 		gitOpts{Dir: root, Timeout: 3 * time.Second})
 	n := 0
 	if r.OK {
-		strings.NewReplacer().Replace(r.Out)
 		for _, c := range r.Out {
 			if c < '0' || c > '9' {
 				return n

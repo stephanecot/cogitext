@@ -19,11 +19,11 @@ platform, with no shared dependency whatsoever. The only thing it requires is
 .claude\cogitex\cogitex.cmd init       # Windows
 ```
 
-`init` creates or joins the branch, mounts the `.cogitex` worktree, and writes
-`.claude/settings.local.json` — **local and gitignored**, because a
-`settings.json` cannot point at a different binary path per OS. That is the
-accepted price of committed binaries: one command after cloning, but no
-installation and no toolchain.
+`init` creates or joins the branch, mounts the `.cogitex` worktree, and merges
+the Claude Code hooks into `.claude/settings.json`. The hook command is the same
+on Windows, macOS and Linux — it runs `git` with an alias that calls
+`cogitex.sh` — so **commit that file**: the next clone gets the hooks with
+nothing to run.
 
 The GitHub Copilot hooks live in `.github/hooks/cogitex.json`: they depend on no
 absolute path, so they are committed once for the whole team — and that is also

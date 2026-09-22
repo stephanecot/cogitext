@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -117,6 +118,18 @@ func TestEnglishOnly(t *testing.T) {
 	}
 	if LooksFrench("Interview with Amélie Rousseau about the radar") != nil {
 		t.Fatal("faux positif sur un nom propre accentué")
+	}
+	for _, s := range []string{
+		"The closing banner reads \"Le dossier est clos\" and must stay verbatim.",
+		"Match the error `Le montant est invalide pour ce dossier` exactly.",
+		"The label « Voir les pièces du dossier » is owned by product.",
+	} {
+		if fr := LooksFrench(s); fr != nil {
+			t.Fatalf("une chaîne citée n'est pas de la prose : %v dans %q", fr, s)
+		}
+	}
+	if LooksFrench("Le montant \"total\" est toujours arrondi") == nil {
+		t.Fatal("la prose hors citation doit rester détectée")
 	}
 }
 
@@ -916,4 +929,190 @@ func TestGuardNamesTheRuleFromTheCachedDeltaOnly(t *testing.T) {
 	if !strings.Contains(out, "facts/2026-01-01-envelope") {
 		t.Fatalf("le refus doit nommer la règle qui concerne ce fichier :\n%s", out)
 	}
+}
+
+// ------------------------------------------------------------ câblage portable
+
+// Dépose le lanceur et le binaire de test là où le lanceur les attend, comme le
+// ferait l'installeur : `<dir>/cogitex.sh` et `<dir>/bin/cogitex-<os>-<arch>`.
+func installShim(t *testing.T, bin, dir string) {
+	t.Helper()
+	shim, err := os.ReadFile(filepath.Join("..", "..", "dist", ".claude", "cogitex", "cogitex.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "cogitex-" + runtime.GOOS + "-" + runtime.GOARCH
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	exe, err := os.ReadFile(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cogitex.sh"), shim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bin", name), exe, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// L'environnement d'un hook : celui du test, sans les variables d'un plugin que la
+// session qui lance les tests pourrait porter.
+func hookEnv(extra ...string) []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "CLAUDE_PLUGIN_ROOT=") && !strings.HasPrefix(kv, "PLUGIN_ROOT=") &&
+			!strings.HasPrefix(kv, "CLAUDE_PROJECT_DIR=") {
+			env = append(env, kv)
+		}
+	}
+	return append(env, extra...)
+}
+
+type claudeHookSpec struct {
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
+}
+
+func readClaudeHooks(t *testing.T, path string) map[string][]claudeHookSpec {
+	t.Helper()
+	var f struct {
+		Hooks map[string][]struct {
+			Hooks []claudeHookSpec `json:"hooks"`
+		} `json:"hooks"`
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b, &f); err != nil {
+		t.Fatalf("%s : %v", path, err)
+	}
+	out := map[string][]claudeHookSpec{}
+	for event, groups := range f.Hooks {
+		for _, g := range groups {
+			out[event] = append(out[event], g.Hooks...)
+		}
+	}
+	return out
+}
+
+// Exécute un hook comme Claude Code en forme exec : l'exécutable directement, les
+// placeholders substitués argument par argument, aucun shell.
+func execClaudeHook(t *testing.T, h claudeHookSpec, dir, projectDir, payload string, env []string) string {
+	t.Helper()
+	if len(h.Args) == 0 {
+		t.Fatalf("hook en forme shell : il dépendrait de Git Bash sous Windows — %+v", h)
+	}
+	args := make([]string, len(h.Args))
+	for i, a := range h.Args {
+		args[i] = strings.ReplaceAll(a, "${CLAUDE_PROJECT_DIR}", projectDir)
+	}
+	cmd := exec.Command(h.Command, args...)
+	cmd.Dir, cmd.Env = dir, env
+	cmd.Stdin = strings.NewReader(payload)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("%s %v : %v\n%s", h.Command, args, err, stderr.String())
+	}
+	return string(out)
+}
+
+func wantDeny(t *testing.T, out string) {
+	t.Helper()
+	var d struct {
+		HookSpecificOutput struct {
+			PermissionDecision string `json:"permissionDecision"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &d); err != nil || d.HookSpecificOutput.PermissionDecision != "deny" {
+		t.Fatalf("attendu un refus au format Claude, obtenu : %q", out)
+	}
+}
+
+// Le câblage d'un projet est commité : UNE commande, la même sur les trois OS. Le
+// test l'exécute telle que `init` l'écrit, depuis un sous-répertoire, et vérifie
+// que `init` fusionne sans rien écraser et retire les hooks de l'ancien câblage
+// local — qui, sinon, tireraient en double.
+func TestInitWiresPortableHooksIntoSettingsJSON(t *testing.T) {
+	bin := buildCtx(t)
+	root := initRepo(t, bin)
+	installShim(t, bin, filepath.Join(root, ".claude", "cogitex"))
+	self := filepath.Join(root, ".claude", "cogitex", "bin", "cogitex-"+runtime.GOOS+"-"+runtime.GOARCH)
+	if runtime.GOOS == "windows" {
+		self += ".exe"
+	}
+
+	claudeDir := filepath.Join(root, ".claude")
+	_ = os.WriteFile(filepath.Join(claudeDir, "settings.json"),
+		[]byte(`{"permissions":{"allow":["Bash(ls)"]},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo bye"}]}]}}`), 0o644)
+	_ = os.WriteFile(filepath.Join(claudeDir, "settings.local.json"),
+		[]byte(`{"model":"opus","hooks":{"PreToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"\"/x/.claude/cogitex/bin/cogitex-darwin-arm64\" hook-guard \"${CLAUDE_PROJECT_DIR}\""}]}]}}`), 0o644)
+
+	for i := 0; i < 2; i++ { // rejouable : la seconde passe ne doit rien dupliquer
+		cmd := exec.Command(self, "init", "--root", root)
+		cmd.Env = hookEnv()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("init : %v\n%s", err, out)
+		}
+	}
+
+	var settings map[string]any
+	b, _ := os.ReadFile(filepath.Join(claudeDir, "settings.json"))
+	if err := json.Unmarshal(b, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := settings["permissions"]; !ok {
+		t.Fatalf("init a écrasé les réglages du projet :\n%s", b)
+	}
+	hooks := readClaudeHooks(t, filepath.Join(claudeDir, "settings.json"))
+	if len(hooks["Stop"]) != 1 {
+		t.Fatalf("le hook d'autrui doit survivre :\n%s", b)
+	}
+	for _, event := range []string{"SessionStart", "UserPromptSubmit", "PreToolUse"} {
+		if len(hooks[event]) != 1 {
+			t.Fatalf("%s : attendu exactement un hook cogitex, obtenu %d\n%s", event, len(hooks[event]), b)
+		}
+		if strings.Contains(strings.Join(hooks[event][0].Args, " "), runtime.GOOS) {
+			t.Fatalf("%s désigne un binaire propre à l'OS — non commitable :\n%s", event, b)
+		}
+	}
+
+	local, _ := os.ReadFile(filepath.Join(claudeDir, "settings.local.json"))
+	if strings.Contains(string(local), "cogitex") || !strings.Contains(string(local), "opus") {
+		t.Fatalf("settings.local.json : l'ancien hook doit partir, le reste rester :\n%s", local)
+	}
+
+	seedStale(t, root)
+	sub := filepath.Join(root, "src", "deep")
+	_ = os.MkdirAll(sub, 0o755)
+	out := execClaudeHook(t, hooks["PreToolUse"][0], sub, root,
+		`{"session_id":"s","tool_name":"Edit"}`, hookEnv("CLAUDE_PROJECT_DIR="+root))
+	wantDeny(t, out)
+}
+
+// Le câblage du plugin suit la même forme, avec le lanceur sous CLAUDE_PLUGIN_ROOT.
+// Le répertoire du plugin porte un espace : c'est le cas courant sous Windows
+// (`C:\Users\Jean Dupont\...`), et celui que les guillemets ratent.
+func TestPluginHooksRunWithoutAShell(t *testing.T) {
+	bin, root := buildCtx(t), emptyRepo(t)
+	plugin := filepath.Join(t.TempDir(), "mon plugin")
+	installShim(t, bin, filepath.Join(plugin, "dist", ".claude", "cogitex"))
+	seedStale(t, root)
+
+	hooks := readClaudeHooks(t, filepath.Join("..", "..", "hooks", "claude-hooks.json"))
+	for _, event := range []string{"SessionStart", "UserPromptSubmit", "PreToolUse"} {
+		if len(hooks[event]) != 1 || hooks[event][0].Command != "git" {
+			t.Fatalf("%s : attendu un hook exec sur git, obtenu %+v", event, hooks[event])
+		}
+	}
+	out := execClaudeHook(t, hooks["PreToolUse"][0], root, root, `{"session_id":"s","tool_name":"Edit"}`,
+		hookEnv("CLAUDE_PLUGIN_ROOT="+plugin, "CLAUDE_PROJECT_DIR="+root))
+	wantDeny(t, out)
 }

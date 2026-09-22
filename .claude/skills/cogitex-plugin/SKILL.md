@@ -50,7 +50,7 @@ The event names differ too (`SessionStart` / `sessionStart`, `PreToolUse` /
 ## Double wiring, and who wins
 
 A project may have its own hooks — written by `init` into
-`.claude/settings.local.json`, or committed in `.github/hooks/cogitex.json` —
+`.claude/settings.json` (merged by `init`, committed), or in `.github/hooks/cogitex.json` —
 while the plugin is installed globally. With no rule, every turn would pay for
 the same hook twice: the brief injected twice, and **two refusals counted for a
 single write**, which trips the circuit breaker too early.
